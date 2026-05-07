@@ -64,16 +64,14 @@ class HIDTransport:
     def __init__(self, vid: int, pid: int):
         self.vid = vid
         self.pid = pid
-        self._device: Optional[hid.device] = None
+        self._device = None
         self._path: Optional[str] = None
 
     def open(self) -> None:
         path = _find_control_path(self.vid, self.pid)
         if path is None:
             raise IOError(f"No HID path found for {self.vid:04X}:{self.pid:04X}")
-        dev = hid.device()
-        dev.open_path(path)
-        dev.set_nonblocking(True)
+        dev = hid.Device(path=path)
         self._device = dev
         self._path = path
         log.debug("Opened HID %04X:%04X path=%s", self.vid, self.pid, path)

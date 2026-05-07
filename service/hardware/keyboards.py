@@ -390,3 +390,55 @@ class RazerBlade15Advanced2021(_Keyboard):
                'set_static_effect', 'set_spectrum_effect', 'set_none_effect',
                'set_wave_effect', 'set_breath_random_effect', 'set_breath_single_effect',
                'set_custom_effect', 'set_key_row']
+
+
+# ── Keypads ───────────────────────────────────────────────────────────────────
+
+class _Keypad(RazerDevice):
+    DEVICE_TYPE = "keypad"
+    USE_EXTENDED_EFFECTS = True
+
+
+class RazerTartarusPro(_Keypad):
+    """
+    Razer Tartarus Pro (0x0244)
+
+    Hardware notes:
+    - 32 keys with Razer analog optical switches (0–255 pressure per key)
+    - 21 individually RGB-addressable zones (keys + scroll wheel)
+    - Scroll wheel, 8-way D-pad, analog thumbstick
+
+    Current support:
+    - RGB lighting (all extended effects, per-key custom frames)   ✓
+    - Keys work in binary (digital) mode via standard HID keyboard  ✓
+    - Brightness control                                            ✓
+
+    TODO:
+    - Analog actuation point / sensitivity adjustment
+      (custom Razer command, class/id TBD — needs USB sniffing with Synapse)
+    - Per-key analog pressure readout
+    - Thumbstick configuration
+    """
+    USB_PID = 0x0244
+    HAS_MATRIX = True
+    MATRIX_DIMS = [1, 21]
+    HAS_ANALOG_SWITCHES = True   # flags future work; not yet used by protocol layer
+
+    METHODS = ['get_firmware_version', 'get_serial', 'get_brightness', 'set_brightness',
+               'set_static_effect', 'set_spectrum_effect', 'set_none_effect',
+               'set_wave_effect', 'set_reactive_effect',
+               'set_breath_random_effect', 'set_breath_single_effect', 'set_breath_dual_effect',
+               'set_starlight_random_effect', 'set_starlight_single_effect', 'set_starlight_dual_effect',
+               'set_custom_effect', 'set_key_row']
+
+
+class RazerTartarusV2(_Keypad):
+    """Standard mechanical Tartarus V2 — no analog switches."""
+    USB_PID = 0x022B
+    HAS_MATRIX = True
+    MATRIX_DIMS = [4, 6]
+    METHODS = ['get_firmware_version', 'get_serial', 'get_brightness', 'set_brightness',
+               'set_static_effect', 'set_spectrum_effect', 'set_none_effect',
+               'set_wave_effect', 'set_reactive_effect',
+               'set_breath_random_effect', 'set_breath_single_effect', 'set_breath_dual_effect',
+               'set_custom_effect', 'set_key_row']
