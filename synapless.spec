@@ -46,7 +46,7 @@ a = Analysis(
         'email_validator',
     ],
     hookspath=[],
-    runtime_hooks=[],
+    runtime_hooks=['rthooks/add_dll_dir.py'],
     excludes=['tkinter', 'test', 'unittest'],
     cipher=block_cipher,
     noarchive=False,
