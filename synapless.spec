@@ -1,14 +1,19 @@
 # PyInstaller spec for synapless.exe
 # Run: pyinstaller synapless.spec
 
+from PyInstaller.utils.hooks import collect_all
+
 block_cipher = None
+
+# Collect the entire hid package including hidapi.dll
+hid_datas, hid_binaries, hid_hidden = collect_all('hid')
 
 a = Analysis(
     ['run.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=[
+    binaries=hid_binaries,
+    datas=hid_datas,
+    hiddenimports=hid_hidden + [
         # pywin32 service support
         'win32timezone',
         'win32service',
@@ -39,8 +44,6 @@ a = Analysis(
         'pydantic',
         'pydantic.deprecated.class_validators',
         'email_validator',
-        # hid / hidapi
-        'hid',
     ],
     hookspath=[],
     runtime_hooks=[],
@@ -63,7 +66,7 @@ exe = EXE(
     strip=False,
     upx=True,
     upx_exclude=[],
-    console=True,        # keep console so service output is visible
-    uac_admin=True,      # request elevation prompt on launch
+    console=True,
+    uac_admin=True,
     icon=None,
 )
