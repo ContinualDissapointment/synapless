@@ -1,7 +1,11 @@
 """Entry point for `synapless` CLI command (defined in pyproject.toml)."""
 
 import sys
-from .daemon import debug_run, _WIN32_AVAILABLE
+
+try:
+    from .daemon import debug_run, _WIN32_AVAILABLE
+except ImportError:
+    from service.daemon import debug_run, _WIN32_AVAILABLE
 
 USAGE = """\
 synapless — Razer peripheral control without Synapse
