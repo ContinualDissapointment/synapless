@@ -1,0 +1,66 @@
+name: Build Windows Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install pywin32
+          pip install -e ".[client]"
+
+      - name: Build executable
+        run: pyinstaller synapless.spec
+
+      - name: Smoke test (import only)
+        run: python -c "import service.hardware; print('devices:', len(service.hardware.all_supported_pids()))"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: synapless-windows
+          path: dist/synapless.exe
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/synapless.exe
+          fail_on_unmatched_files: true
+          body: |
+            ## synapless ${{ github.ref_name }}
+
+            > ⚠️ **Proof of concept.** Tested on Razer Tartarus Pro. Other devices are untested.
+            > Run at your own risk. PRs welcome.
+
+            ### Install
+
+            1. Download `synapless.exe`
+            2. Right-click → **Run as administrator** (required for HID access)
+
+            ```
+            synapless.exe debug        ← run in foreground, Ctrl+C to stop
+            synapless.exe install      ← install as Windows Service (auto-starts on boot)
+            synapless.exe start
+            synapless.exe stop
+            synapless.exe remove
+            ```
+
+            3. Open http://127.0.0.1:8083/docs to control your devices
+
+            ### Supported devices
+            See [README](https://github.com/ContinualDissapointment/synapless#supported-devices) for the full list.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
