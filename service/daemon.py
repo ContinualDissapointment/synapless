@@ -40,11 +40,16 @@ def run_service() -> None:
     """Start DeviceManager + uvicorn; block until _shutdown_event is set."""
     import uvicorn
     from .device_manager import DeviceManager
-    from .api import app, set_manager, HOST, PORT
+    from .macro_manager import MacroManager
+    from .api import app, set_manager, set_macro_manager, HOST, PORT
 
     manager = DeviceManager()
     manager.start()
     set_manager(manager)
+
+    macros = MacroManager()
+    macros.start()
+    set_macro_manager(macros)
 
     config = uvicorn.Config(
         app,
@@ -69,6 +74,7 @@ def run_service() -> None:
     log.info("Shutdown requested, stopping...")
     server.should_exit = True
     t.join(timeout=10)
+    macros.stop()
     manager.stop()
     log.info("openrazer-win stopped")
 

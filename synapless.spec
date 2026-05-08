@@ -8,12 +8,15 @@ block_cipher = None
 # Collect the entire hid package including hidapi.dll
 hid_datas, hid_binaries, hid_hidden = collect_all('hid')
 
+# Collect pynput (Controller is still used for key injection)
+pynput_datas, pynput_binaries, pynput_hidden = collect_all('pynput')
+
 a = Analysis(
     ['run.py'],
     pathex=[],
-    binaries=hid_binaries + [('hidapi.dll', '.')],
-    datas=hid_datas + [('service/static', 'service/static')],
-    hiddenimports=hid_hidden + [
+    binaries=hid_binaries + pynput_binaries + [('hidapi.dll', '.')],
+    datas=hid_datas + pynput_datas + [('service/static', 'service/static')],
+    hiddenimports=hid_hidden + pynput_hidden + [
         # pywin32 service support
         'win32timezone',
         'win32service',

@@ -246,6 +246,39 @@ footer {
   display: flex; justify-content: space-between; align-items: center;
   flex-shrink: 0; letter-spacing: .5px;
 }
+
+/* ── Macro grid ────────────────────────────────────────────────── */
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+  margin-bottom: 14px;
+}
+.macro-grid .spacer { grid-column: span 5; height: 4px; }
+.macro-grid .wide   { grid-column: span 3; }
+.macro-grid .w2     { grid-column: span 2; }
+
+.mbtn {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 3px; padding: 7px 4px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  transition: border-color .12s; min-height: 48px; justify-content: center;
+}
+.mbtn:hover { border-color: var(--border2); }
+.mbtn.has-macro { border-color: var(--green-dim); background: var(--green-glow); }
+.mbtn.selected  { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+.mbtn-key  { font-size: 10px; font-weight: 700; color: var(--text); letter-spacing: .5px; text-transform: uppercase; }
+.mbtn-seq  { font-size: 8px; color: var(--green); font-family: monospace; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mbtn-mode { font-size: 7px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .5px; }
+
+/* Macro editor */
+.macro-editor {
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 3px; padding: 12px; margin-bottom: 4px;
+}
+.med-title { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+.med-title span { color: var(--green); font-weight: 700; }
+.med-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -444,6 +477,76 @@ footer {
 
       </div>
     </div>
+
+    <!-- Macros panel -->
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="panel-title">Macro Engine™ — definitely not a cheat tool</div>
+      </div>
+      <div class="panel-bd">
+
+        <div class="macro-grid" id="macro-grid"></div>
+
+        <!-- Inline editor (hidden until a button is clicked) -->
+        <div class="macro-editor" id="macro-editor" style="display:none">
+          <div class="med-title">Editing: <span id="med-key-label"></span></div>
+
+          <!-- Sequence input (hidden for start_stop mode) -->
+          <div class="med-row" id="med-seq-row">
+            <span class="plabel">Sequence</span>
+            <input type="text" id="med-seq" placeholder="e.g. ctrl+c  or  f5  or  ctrl+shift+esc"
+                   style="flex:1;background:var(--bg4);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:2px;font-size:12px;outline:none;">
+          </div>
+
+          <div class="med-row">
+            <span class="plabel">Mode</span>
+            <select id="med-mode" onchange="modeChanged()">
+              <option value="once">Keystroke — fires once per press</option>
+              <option value="hold">Hold — spams while held</option>
+              <option value="toggle">Toggle — press to start / press to stop spamming</option>
+              <option value="start_stop">Record — plays back a recorded sequence</option>
+            </select>
+            <span id="med-interval-wrap" style="display:flex;align-items:center;gap:4px;margin-left:8px">
+              <span class="plabel">Interval</span>
+              <input type="number" id="med-interval" value="50" min="10" max="5000"
+                     style="width:64px;background:var(--bg4);color:var(--text);border:1px solid var(--border);padding:4px 6px;border-radius:2px;font-size:11px;outline:none;">
+              <span style="font-size:10px;color:var(--text-dim)">ms</span>
+            </span>
+          </div>
+
+          <!-- Recorder UI (only shown for start_stop mode) -->
+          <div id="med-recorder" style="display:none;margin-top:8px">
+            <div class="med-row">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text)">
+                <input type="checkbox" id="med-timing">
+                <span>Include timing between keypresses</span>
+              </label>
+            </div>
+            <div class="med-row" style="gap:8px;margin-top:6px">
+              <button class="btn btn-primary" id="med-rec-btn" onclick="toggleRecording()">● Record</button>
+              <span id="med-rec-status" style="color:var(--text-dim);font-size:11px;align-self:center"></span>
+            </div>
+            <div id="med-rec-preview"
+                 style="margin-top:6px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border);border-radius:2px;font-size:11px;color:var(--text-dim);min-height:28px;word-break:break-all;font-family:monospace;">
+              —
+            </div>
+          </div>
+
+          <div class="btn-row" style="margin-top:10px">
+            <button class="btn btn-primary" onclick="saveMacro()">Save</button>
+            <button class="btn btn-ghost" onclick="clearMacro()">Clear</button>
+            <button class="btn btn-ghost" onclick="closeMacroEditor()">Cancel</button>
+          </div>
+        </div>
+
+        <div class="status" id="macro-status" style="margin-top:10px">
+          <div class="sdot" id="msdot"></div>
+          <span id="mstext">Click a button to assign a macro.</span>
+        </div>
+
+      </div>
+    </div>
+
   </div>
 
 </div>
@@ -488,6 +591,7 @@ window.addEventListener('load', async () => {
   clearInterval(t);
   document.getElementById('overlay').style.display = 'none';
   await loadDevices();
+  await loadMacros();
   rotateNotifs();
 });
 
@@ -638,6 +742,236 @@ function locked(name) {
 function status(type, msg) {
   document.getElementById('sdot').className = 'sdot ' + type;
   document.getElementById('stext').textContent = msg;
+}
+
+// ── Macros ────────────────────────────────────────────────────────
+
+// Tartarus Pro default button layout
+const BUTTONS = [
+  // row 1
+  {key:'1',label:'1'},{key:'2',label:'2'},{key:'3',label:'3'},{key:'4',label:'4'},{key:'5',label:'5'},
+  // row 2
+  {key:'tab',label:'Tab'},{key:'q',label:'Q'},{key:'w',label:'W'},{key:'e',label:'E'},{key:'r',label:'R'},
+  // row 3
+  {key:'caps_lock',label:'Caps'},{key:'a',label:'A'},{key:'s',label:'S'},{key:'d',label:'D'},{key:'f',label:'F'},
+  // row 4
+  {key:'shift',label:'Shift'},{key:'z',label:'Z'},{key:'x',label:'X'},{key:'c',label:'C'},{key:'v',label:'V'},
+  // row 5 — space (wide) + gap fillers
+  {key:'space',label:'Space',cls:'wide'},{key:null,label:'',cls:'w2'},
+  // separator
+  {key:null,label:'',cls:'spacer'},
+  // d-pad row
+  {key:'up',label:'↑'},{key:'down',label:'↓'},{key:'left',label:'←'},{key:'right',label:'→'},{key:null,label:'',cls:''},
+  // scroll
+  {key:'scroll_lock',label:'Mode'},{key:'page_up',label:'Scroll↑'},{key:'page_down',label:'Scroll↓'},
+  {key:'media_play_pause',label:'▶⏸'},{key:'media_volume_mute',label:'🔇'},
+];
+
+let macros = {};
+let selectedKey = null;
+
+// ── Recorder state ────────────────────────────────────────────────
+let isRecording = false;
+let recordedSteps = [];      // [{combo, delay}] accumulated during recording
+let recordedSequence = '';   // formatted sequence string after stop
+let lastKeyTime = 0;
+
+const _MODS = new Set(['Control','Alt','Shift','Meta']);
+const _KEY_MAP = {
+  ' ':'space','Enter':'enter','Escape':'esc','Tab':'tab',
+  'Backspace':'backspace','Delete':'delete','Insert':'insert',
+  'ArrowUp':'up','ArrowDown':'down','ArrowLeft':'left','ArrowRight':'right',
+  'Home':'home','End':'end','PageUp':'page_up','PageDown':'page_down',
+  'CapsLock':'caps_lock','PrintScreen':'print_screen',
+  ...Object.fromEntries(Array.from({length:12},(_,i)=>[`F${i+1}`,`f${i+1}`])),
+};
+
+async function loadMacros() {
+  try {
+    const r = await fetch('/api/v1/macros');
+    macros = (await r.json()).macros || {};
+    renderGrid();
+  } catch(e) { mstatus('err', 'Could not load macros: ' + e.message); }
+}
+
+function renderGrid() {
+  const grid = document.getElementById('macro-grid');
+  grid.innerHTML = '';
+  for (const btn of BUTTONS) {
+    const el = document.createElement('div');
+    if (!btn.key && btn.cls === 'spacer') { el.className = 'spacer'; grid.appendChild(el); continue; }
+    if (!btn.key) { el.className = 'mbtn ' + (btn.cls||''); el.style.visibility='hidden'; grid.appendChild(el); continue; }
+
+    el.className = 'mbtn' + (btn.cls ? ' '+btn.cls : '') + (macros[btn.key] ? ' has-macro' : '') + (selectedKey===btn.key ? ' selected' : '');
+    el.dataset.key = btn.key;
+
+    const keyEl = document.createElement('div');
+    keyEl.className = 'mbtn-key';
+    keyEl.textContent = btn.label;
+    el.appendChild(keyEl);
+
+    if (macros[btn.key]) {
+      const seqEl = document.createElement('div');
+      seqEl.className = 'mbtn-seq';
+      seqEl.textContent = macros[btn.key].sequence;
+      el.appendChild(seqEl);
+      const modeEl = document.createElement('div');
+      modeEl.className = 'mbtn-mode';
+      modeEl.textContent = macros[btn.key].mode;
+      el.appendChild(modeEl);
+    }
+
+    el.onclick = () => openMacroEditor(btn.key, btn.label);
+    grid.appendChild(el);
+  }
+}
+
+function modeChanged() {
+  const mode = document.getElementById('med-mode').value;
+  const isRecord = mode === 'start_stop';
+  document.getElementById('med-seq-row').style.display = isRecord ? 'none' : '';
+  document.getElementById('med-interval-wrap').style.display = isRecord ? 'none' : '';
+  document.getElementById('med-recorder').style.display = isRecord ? '' : 'none';
+  if (!isRecord && isRecording) stopRecording();
+}
+
+function openMacroEditor(key, label) {
+  if (isRecording) stopRecording();
+  selectedKey = key;
+  recordedSteps = [];
+  document.getElementById('med-key-label').textContent = label;
+  const m = macros[key] || {};
+  document.getElementById('med-seq').value = m.sequence || '';
+  document.getElementById('med-mode').value = m.mode || 'once';
+  document.getElementById('med-interval').value = m.interval_ms || 50;
+  // Restore recorder state for start_stop macros
+  recordedSequence = (m.mode === 'start_stop') ? (m.sequence || '') : '';
+  document.getElementById('med-timing').checked = !!(m.record_timing);
+  document.getElementById('med-rec-preview').textContent = recordedSequence || '—';
+  document.getElementById('med-rec-status').textContent = recordedSequence
+    ? `Previously recorded (${recordedSequence.split(',').length} step(s))`
+    : 'No sequence recorded yet';
+  document.getElementById('macro-editor').style.display = 'block';
+  modeChanged();
+  if (m.mode !== 'start_stop') document.getElementById('med-seq').focus();
+  renderGrid();
+}
+
+function closeMacroEditor() {
+  if (isRecording) stopRecording();
+  selectedKey = null;
+  document.getElementById('macro-editor').style.display = 'none';
+  renderGrid();
+}
+
+async function saveMacro() {
+  if (!selectedKey) return;
+  const mode = document.getElementById('med-mode').value;
+  let seq, recordTiming = false;
+  if (mode === 'start_stop') {
+    if (isRecording) stopRecording();
+    seq = recordedSequence;
+    recordTiming = document.getElementById('med-timing').checked;
+    if (!seq) { mstatus('err', 'Nothing recorded — press ● Record and type your sequence first'); return; }
+  } else {
+    seq = document.getElementById('med-seq').value.trim();
+    if (!seq) { mstatus('err', 'Sequence cannot be empty'); return; }
+  }
+  const payload = {
+    sequence: seq,
+    mode,
+    interval_ms: +(document.getElementById('med-interval').value || 50),
+    record_timing: recordTiming,
+  };
+  try {
+    const r = await fetch(`/api/v1/macros/${encodeURIComponent(selectedKey)}`, {
+      method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload),
+    });
+    if (r.ok) {
+      macros[selectedKey] = payload;
+      mstatus('ok', `Macro saved for [${selectedKey}]`);
+      closeMacroEditor();
+    } else {
+      mstatus('err', 'Save failed: ' + r.status);
+    }
+  } catch(e) { mstatus('err', e.message); }
+}
+
+async function clearMacro() {
+  if (!selectedKey) return;
+  try {
+    await fetch(`/api/v1/macros/${encodeURIComponent(selectedKey)}`, { method: 'DELETE' });
+    delete macros[selectedKey];
+    mstatus('ok', `Macro cleared for [${selectedKey}]`);
+    closeMacroEditor();
+  } catch(e) { mstatus('err', e.message); }
+}
+
+// ── Recorder ──────────────────────────────────────────────────────
+
+function toggleRecording() {
+  if (isRecording) stopRecording();
+  else startRecording();
+}
+
+function startRecording() {
+  recordedSteps = [];
+  lastKeyTime = 0;
+  isRecording = true;
+  document.getElementById('med-rec-btn').textContent = '■ Stop';
+  document.getElementById('med-rec-btn').style.background = 'var(--red)';
+  document.getElementById('med-rec-btn').style.borderColor = 'var(--red)';
+  document.getElementById('med-rec-status').textContent = 'Recording… press keys now';
+  document.getElementById('med-rec-preview').textContent = '—';
+  document.addEventListener('keydown', _recKeyDown, true);
+}
+
+function stopRecording() {
+  isRecording = false;
+  document.removeEventListener('keydown', _recKeyDown, true);
+  const btn = document.getElementById('med-rec-btn');
+  btn.textContent = '● Record';
+  btn.style.background = '';
+  btn.style.borderColor = '';
+  if (recordedSteps.length) {
+    recordedSequence = _formatSteps();
+    document.getElementById('med-rec-preview').textContent = recordedSequence;
+    document.getElementById('med-rec-status').textContent = `${recordedSteps.length} step(s) recorded`;
+  } else {
+    document.getElementById('med-rec-status').textContent = 'Nothing recorded';
+  }
+}
+
+function _recKeyDown(e) {
+  if (_MODS.has(e.key)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const withTiming = document.getElementById('med-timing').checked;
+  const now = Date.now();
+  const delay = (withTiming && lastKeyTime) ? Math.round(now - lastKeyTime) : 0;
+  lastKeyTime = now;
+  const parts = [];
+  if (e.ctrlKey) parts.push('ctrl');
+  if (e.altKey)  parts.push('alt');
+  if (e.shiftKey) parts.push('shift');
+  if (e.metaKey)  parts.push('win');
+  const k = _KEY_MAP[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : e.key.toLowerCase());
+  parts.push(k);
+  recordedSteps.push({combo: parts.join('+'), delay});
+  document.getElementById('med-rec-preview').textContent = _formatSteps();
+}
+
+function _formatSteps() {
+  const withTiming = document.getElementById('med-timing').checked;
+  return recordedSteps.map((s, i) => {
+    const nextDelay = recordedSteps[i + 1]?.delay || 0;
+    return s.combo + (withTiming && nextDelay > 0 ? `:${nextDelay}` : '');
+  }).join(', ');
+}
+
+function mstatus(type, msg) {
+  document.getElementById('msdot').className = 'sdot ' + type;
+  document.getElementById('mstext').textContent = msg;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────

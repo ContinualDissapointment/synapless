@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 _STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 from .device_manager import DeviceManager
+from .macro_manager import MacroManager
 
 log = logging.getLogger(__name__)
 
@@ -34,11 +35,17 @@ app.add_middleware(
 
 # Injected at startup by daemon.py
 _manager: Optional[DeviceManager] = None
+_macros: Optional[MacroManager] = None
 
 
 def set_manager(manager: DeviceManager) -> None:
     global _manager
     _manager = manager
+
+
+def set_macro_manager(manager: MacroManager) -> None:
+    global _macros
+    _macros = manager
 
 
 def _get_device(serial: str):
@@ -287,6 +294,43 @@ def get_battery(serial: str):
 def health():
     count = len(_manager.list_devices()) if _manager else 0
     return {"status": "ok", "devices": count}
+
+
+# ── Macros ───────────────────────────────────────────────────────────────────
+
+class MacroConfig(BaseModel):
+    sequence: str
+    mode: str
+    interval_ms: int = Field(default=50, ge=10, le=5000)
+    record_timing: bool = False
+
+    @field_validator('mode')
+    @classmethod
+    def valid_mode(cls, v):
+        if v not in ('once', 'hold', 'toggle', 'start_stop'):
+            raise ValueError("mode must be once, hold, toggle, or start_stop")
+        return v
+
+
+@app.get("/api/v1/macros")
+def list_macros():
+    return {"macros": _macros.get_all() if _macros else {}}
+
+
+@app.put("/api/v1/macros/{key}")
+def set_macro(key: str, config: MacroConfig):
+    if _macros is None:
+        raise HTTPException(503, "Macro manager not ready")
+    _macros.set_macro(key, config.sequence, config.mode, config.interval_ms, config.record_timing)
+    return {"ok": True}
+
+
+@app.delete("/api/v1/macros/{key}")
+def delete_macro(key: str):
+    if _macros is None:
+        raise HTTPException(503, "Macro manager not ready")
+    _macros.delete_macro(key)
+    return {"ok": True}
 
 
 # ── GUI ───────────────────────────────────────────────────────────────────────

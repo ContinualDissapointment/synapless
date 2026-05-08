@@ -4,12 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "synapless"
-version = "0.3.0"
+version = "0.4.0"
 description = "Razer peripheral control for Windows — no Synapse required"
 license = { text = "GPL-2.0-or-later" }
 requires-python = ">=3.10"
 dependencies = [
     "hid>=1.0.6",
+    "pynput>=1.7",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.29",
     "pywin32>=306; sys_platform == 'win32'",
