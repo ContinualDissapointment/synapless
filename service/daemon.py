@@ -26,8 +26,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     handlers=[
-        logging.handlers.RotatingFileHandler(
-            LOG_DIR / "service.log", maxBytes=5 * 1024 * 1024, backupCount=3
+        logging.handlers.TimedRotatingFileHandler(
+            LOG_DIR / "service.log", when="midnight", backupCount=4, encoding="utf-8"
         ),
         logging.StreamHandler(sys.stdout),
     ],
