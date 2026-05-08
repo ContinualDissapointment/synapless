@@ -11,7 +11,7 @@ hid_datas, hid_binaries, hid_hidden = collect_all('hid')
 a = Analysis(
     ['run.py'],
     pathex=[],
-    binaries=hid_binaries,
+    binaries=hid_binaries + [('hidapi.dll', '.')],
     datas=hid_datas + [('service/static', 'service/static')],
     hiddenimports=hid_hidden + [
         # pywin32 service support
@@ -64,7 +64,7 @@ exe = EXE(
     name='synapless',
     debug=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     console=True,
     uac_admin=True,
