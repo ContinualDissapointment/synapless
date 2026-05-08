@@ -10,9 +10,16 @@ The service must run elevated (Administrator) so Windows allows feature-report
 access on these interfaces.
 """
 
+import os
 import time
 import logging
 from typing import Optional
+
+# Ensure hidapi.dll (bundled in the project root) is found on Windows
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.abspath(os.path.join(_HERE, "..", ".."))
+if hasattr(os, "add_dll_directory"):
+    os.add_dll_directory(_ROOT)
 
 try:
     import hid
