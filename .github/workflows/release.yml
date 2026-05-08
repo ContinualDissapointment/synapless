@@ -47,7 +47,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
-          files: dist/synapless.exe
+          files: |
+            dist/synapless.exe
+            start.bat
+            install-service.bat
           fail_on_unmatched_files: true
           overwrite: true
           body: |
@@ -56,20 +59,23 @@ jobs:
             > ⚠️ **Proof of concept.** Tested on Razer Tartarus Pro. Other devices are untested.
             > Run at your own risk. PRs welcome.
 
-            ### Install
-
-            1. Download `synapless.exe`
-            2. Right-click → **Run as administrator** (required for HID access)
+            ### Option A — EXE (if Windows Defender blocks it, add an exclusion first)
 
             ```
             synapless.exe debug        ← run in foreground, Ctrl+C to stop
             synapless.exe install      ← install as Windows Service (auto-starts on boot)
-            synapless.exe start
-            synapless.exe stop
-            synapless.exe remove
+            synapless.exe start / stop / remove
             ```
 
-            3. Open http://127.0.0.1:8083/ in your browser — full GUI included
+            ### Option B — Run from Python (no Defender issues)
+
+            Requires Python 3.10+:
+            ```
+            pip install hid pynput fastapi "uvicorn[standard]" pywin32
+            ```
+            Then double-click **`start.bat`** to run in foreground, or **`install-service.bat`** (as Administrator) to install as a Windows Service.
+
+            Open http://127.0.0.1:8083/ in your browser — full GUI included.
 
             ### Supported devices
             See [README](https://github.com/ContinualDissapointment/synapless#supported-devices) for the full list.
