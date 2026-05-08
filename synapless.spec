@@ -12,7 +12,7 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=hid_binaries,
-    datas=hid_datas,
+    datas=hid_datas + [('service/static', 'service/static')],
     hiddenimports=hid_hidden + [
         # pywin32 service support
         'win32timezone',

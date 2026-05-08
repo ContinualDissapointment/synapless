@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and attach exe to (e.g. v0.2.0)'
+        required: true
 
 jobs:
   build:
@@ -15,6 +20,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -41,6 +48,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           files: dist/synapless.exe
           fail_on_unmatched_files: true
           body: |
@@ -62,7 +70,7 @@ jobs:
             synapless.exe remove
             ```
 
-            3. Open http://127.0.0.1:8083/docs to control your devices
+            3. Open http://127.0.0.1:8083/ in your browser — full GUI included
 
             ### Supported devices
             See [README](https://github.com/ContinualDissapointment/synapless#supported-devices) for the full list.
