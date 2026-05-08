@@ -38,3 +38,7 @@ def main() -> None:
         print("pywin32 not installed. Only 'debug' mode is available.")
         print("Install: pip install pywin32")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
