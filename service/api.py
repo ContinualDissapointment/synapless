@@ -296,6 +296,25 @@ def health():
     return {"status": "ok", "devices": count}
 
 
+@app.get("/api/v1/debug/hid")
+def debug_hid():
+    """Return raw hid.enumerate output for diagnostics."""
+    import sys, os
+    try:
+        import hid
+        all_devs = hid.enumerate(0, 0)
+        razer = [d for d in all_devs if d.get("vendor_id") == 0x1532]
+        return {
+            "hid_version": getattr(hid, "__version__", "unknown"),
+            "frozen": getattr(sys, "frozen", False),
+            "meipass": getattr(sys, "_MEIPASS", None),
+            "total_hid_devices": len(all_devs),
+            "razer_devices": razer,
+        }
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 # ── Macros ───────────────────────────────────────────────────────────────────
 
 class MacroConfig(BaseModel):
