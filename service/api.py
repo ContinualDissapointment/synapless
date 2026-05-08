@@ -6,11 +6,16 @@ The server binds to 127.0.0.1:8083 (localhost only) so no firewall rules needed.
 """
 
 import logging
+import os
 from typing import Annotated, Optional
 
 from fastapi import FastAPI, HTTPException, Path, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
+
+_STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
 from .device_manager import DeviceManager
 
@@ -282,3 +287,12 @@ def get_battery(serial: str):
 def health():
     count = len(_manager.list_devices()) if _manager else 0
     return {"status": "ok", "devices": count}
+
+
+# ── GUI ───────────────────────────────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+def gui():
+    return FileResponse(os.path.join(_STATIC_DIR, "index.html"))
+
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SYNAPLESS™ — Not Synapse</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --green: #44d62c;
+  --green-dim: #2a8a1a;
+  --green-glow: rgba(68,214,44,0.12);
+  --bg:   #0a0a0a;
+  --bg2:  #111;
+  --bg3:  #181818;
+  --bg4:  #202020;
+  --border: #252525;
+  --border2: #303030;
+  --text: #ddd;
+  --text-dim: #666;
+  --text-muted: #333;
+  --red: #e03030;
+  --orange: #e07800;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+/* ── Loading overlay ───────────────────────────────────────────── */
+#overlay {
+  position: fixed; inset: 0;
+  background: #000;
+  z-index: 9999;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px;
+}
+.ov-logo {
+  font-size: 32px; font-weight: 900; letter-spacing: 6px;
+  color: var(--green);
+  text-shadow: 0 0 40px var(--green), 0 0 80px rgba(68,214,44,.3);
+  animation: glow-pulse 1.4s ease-in-out infinite;
+}
+@keyframes glow-pulse {
+  0%,100% { text-shadow: 0 0 30px var(--green); }
+  50%      { text-shadow: 0 0 60px var(--green), 0 0 100px rgba(68,214,44,.25); }
+}
+.ov-sub { font-size: 9px; letter-spacing: 4px; color: var(--text-dim); text-transform: uppercase; }
+.ov-msg { font-size: 11px; letter-spacing: 1px; color: #444; min-height: 16px; }
+.ov-bar-wrap { width: 200px; height: 1px; background: #1a1a1a; }
+.ov-bar { height: 1px; background: var(--green); animation: bar-fill 2.4s ease-in-out forwards; }
+@keyframes bar-fill { 0%{width:0} 35%{width:45%} 65%{width:78%} 90%{width:96%} 100%{width:100%} }
+
+/* ── Header ────────────────────────────────────────────────────── */
+header {
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  padding: 0 18px;
+  height: 50px;
+  display: flex; align-items: center; gap: 16px;
+  flex-shrink: 0;
+}
+.logo-name {
+  font-size: 16px; font-weight: 900; letter-spacing: 3px;
+  color: var(--green);
+  text-shadow: 0 0 16px rgba(68,214,44,.5);
+}
+.logo-tag { font-size: 8px; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; }
+.header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.chip {
+  padding: 3px 8px; border-radius: 2px;
+  font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  border: 1px solid; cursor: default; white-space: nowrap;
+}
+.chip-green { background: var(--green-glow); border-color: var(--green-dim); color: var(--green); }
+.chip-grey  { background: #151515; border-color: #252525; color: #444; }
+.chip-toggle { cursor: pointer; transition: .15s; }
+.chip-toggle.on { background: var(--green-glow); border-color: var(--green); color: var(--green); }
+
+/* ── Notification bar ──────────────────────────────────────────── */
+#notif {
+  background: #120c00; border-bottom: 1px solid #2a1c00;
+  padding: 5px 18px; font-size: 11px; color: var(--orange);
+  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+}
+#notif-text { flex: 1; }
+.notif-x { cursor: pointer; opacity: .4; font-size: 13px; }
+.notif-x:hover { opacity: 1; }
+
+/* ── Layout ────────────────────────────────────────────────────── */
+.main { flex: 1; display: flex; overflow: hidden; }
+
+/* ── Sidebar ───────────────────────────────────────────────────── */
+.sidebar {
+  width: 210px; flex-shrink: 0;
+  background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+.sb-section { padding: 12px; border-bottom: 1px solid var(--border); }
+.sb-title {
+  font-size: 8px; font-weight: 700; letter-spacing: 2px;
+  color: var(--text-muted); text-transform: uppercase; margin-bottom: 10px;
+}
+
+.dev-card {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 3px;
+  padding: 10px;
+}
+.dev-card.live { border-color: #1d4a15; }
+.dev-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 5px; background: #222; }
+.dev-dot.live { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.dev-name { font-weight: 700; font-size: 12px; margin-bottom: 7px; }
+.dev-row { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); padding: 1px 0; }
+.dev-row .v { color: var(--text); font-family: monospace; font-size: 10px; }
+.chroma-pill {
+  display: inline-block; margin-top: 8px;
+  padding: 2px 6px; border-radius: 2px; font-size: 8px; font-weight: 900; letter-spacing: 1px;
+  background: linear-gradient(90deg,#ff0066,#0088ff,#44d62c,#ff8800,#ff0066);
+  background-size: 200%;
+  color: #000;
+  animation: chroma-shift 3s linear infinite;
+}
+@keyframes chroma-shift { to { background-position: 200% 0; } }
+
+.no-dev { color: var(--text-muted); font-size: 11px; font-style: italic; text-align: center; padding: 14px 0; }
+
+/* Premium locked features */
+.sb-premium { padding: 10px 12px; flex: 1; }
+.pf {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 7px; border-radius: 2px;
+  color: var(--text-muted); font-size: 11px;
+  cursor: pointer; margin-bottom: 1px;
+  transition: background .1s;
+}
+.pf:hover { background: var(--bg3); color: #555; }
+.pf-lock { font-size: 9px; flex-shrink: 0; }
+.pf-tag {
+  margin-left: auto; font-size: 7px; padding: 1px 3px;
+  background: #1a1200; border: 1px solid #332500; color: #886600;
+  border-radius: 1px; letter-spacing: 1px; flex-shrink: 0;
+}
+
+/* ── Content ───────────────────────────────────────────────────── */
+.content { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+
+.panel { background: var(--bg2); border: 1px solid var(--border); border-radius: 3px; }
+.panel-hd {
+  padding: 9px 14px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 10px;
+}
+.panel-title { font-size: 9px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); text-transform: uppercase; }
+.panel-bd { padding: 14px; }
+
+/* Zone tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+.tab {
+  padding: 4px 11px; border-radius: 2px; cursor: pointer;
+  font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  border: 1px solid var(--border); background: var(--bg3); color: var(--text-dim);
+  transition: .12s;
+}
+.tab:hover { border-color: var(--border2); color: var(--text); }
+.tab.on { background: var(--green-glow); border-color: var(--green-dim); color: var(--green); }
+
+/* Effect grid */
+.fx-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 14px;
+}
+.fx-btn {
+  padding: 8px 4px; border-radius: 2px; cursor: pointer; text-align: center;
+  font-size: 10px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase;
+  border: 1px solid var(--border); background: var(--bg3); color: var(--text-dim);
+  transition: .12s;
+}
+.fx-btn:hover { border-color: var(--border2); color: var(--text); }
+.fx-btn.on { background: var(--green-glow); border-color: var(--green); color: var(--green); }
+
+/* Params panel */
+.params {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 2px;
+  padding: 11px; margin-bottom: 14px; display: none;
+}
+.params.show { display: block; }
+.prow { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+.prow:last-child { margin-bottom: 0; }
+.plabel { font-size: 9px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; min-width: 54px; }
+
+input[type=color] {
+  width: 34px; height: 24px; padding: 1px;
+  border: 1px solid var(--border); border-radius: 2px;
+  background: var(--bg4); cursor: pointer;
+}
+input[type=range] { flex: 1; accent-color: var(--green); cursor: pointer; min-width: 80px; }
+select {
+  background: var(--bg4); color: var(--text);
+  border: 1px solid var(--border); padding: 3px 7px;
+  border-radius: 2px; font-size: 11px; cursor: pointer; outline: none;
+}
+select:focus { border-color: var(--green-dim); }
+
+/* Brightness */
+.brow { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.bval { font-family: monospace; font-size: 12px; color: var(--green); min-width: 38px; text-align: right; }
+
+/* Buttons */
+.btn {
+  padding: 8px 18px; border-radius: 2px; cursor: pointer;
+  font-size: 10px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase;
+  border: none; transition: .12s;
+}
+.btn-primary { background: var(--green); color: #000; }
+.btn-primary:hover { background: #5aee40; box-shadow: 0 0 14px rgba(68,214,44,.35); }
+.btn-primary:active { transform: scale(.98); }
+.btn-primary:disabled { background: var(--border2); color: var(--text-muted); box-shadow: none; cursor: not-allowed; }
+.btn-ghost { background: var(--bg3); color: var(--text-dim); border: 1px solid var(--border); }
+.btn-ghost:hover { border-color: var(--border2); color: var(--text); }
+
+.btn-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* Status */
+.status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--text-dim);
+  padding-top: 11px; margin-top: 11px; border-top: 1px solid var(--border);
+}
+.sdot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
+.sdot.ok  { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.sdot.err { background: var(--red);   box-shadow: 0 0 5px var(--red); }
+
+/* Footer */
+footer {
+  background: var(--bg2); border-top: 1px solid var(--border);
+  padding: 7px 18px; font-size: 9px; color: var(--text-muted);
+  display: flex; justify-content: space-between; align-items: center;
+  flex-shrink: 0; letter-spacing: .5px;
+}
+</style>
+</head>
+<body>
+
+<!-- Loading overlay -->
+<div id="overlay">
+  <div class="ov-logo">SYNAPLESS</div>
+  <div class="ov-sub">for gamers who escaped</div>
+  <div class="ov-msg" id="ov-msg">Initializing gaming soul…</div>
+  <div class="ov-bar-wrap"><div class="ov-bar"></div></div>
+</div>
+
+<!-- Header -->
+<header>
+  <div>
+    <div class="logo-name">SYNAPLESS™</div>
+    <div class="logo-tag">Not Synapse &nbsp;·&nbsp; v1.0 &nbsp;·&nbsp; actually works</div>
+  </div>
+  <div class="header-right">
+    <span class="chip chip-grey" title="Synapse is not installed. This is intentional.">SYNAPSE: NOT INSTALLED ✓</span>
+    <span class="chip chip-toggle" id="hyper-chip" onclick="toggleHyper()">HYPER MODE™: OFF</span>
+    <span class="chip chip-green">CHROMA™ READY</span>
+  </div>
+</header>
+
+<!-- Notification bar -->
+<div id="notif">
+  <span>⚠</span>
+  <span id="notif-text">Synapse 5.3 update available — Added a third AI to the RGB. (1.4 GB)</span>
+  <span class="notif-x" onclick="this.parentElement.style.display='none'">✕</span>
+</div>
+
+<!-- Body -->
+<div class="main">
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sb-section">
+      <div class="sb-title">Device Roster™</div>
+      <div id="dev-panel"><div class="no-dev">Locating gaming hardware…</div></div>
+    </div>
+
+    <div class="sb-premium">
+      <div class="sb-title">Premium Features™</div>
+      <div class="pf" onclick="locked('AI RGB Optimizer™')">
+        <span class="pf-lock">🔒</span><span>AI RGB Optimizer™</span><span class="pf-tag">GOLD</span>
+      </div>
+      <div class="pf" onclick="locked('Cloud Profile Sync')">
+        <span class="pf-lock">🔒</span><span>Cloud Profile Sync</span><span class="pf-tag">GOLD</span>
+      </div>
+      <div class="pf" onclick="locked('Esports Optimizer™')">
+        <span class="pf-lock">🔒</span><span>Esports Optimizer™</span><span class="pf-tag">GOLD</span>
+      </div>
+      <div class="pf" onclick="locked('Macro Recorder Pro™')">
+        <span class="pf-lock">🔒</span><span>Macro Recorder Pro™</span><span class="pf-tag">GOLD</span>
+      </div>
+      <div class="pf" onclick="locked('Therapy Mode™')">
+        <span class="pf-lock">🔒</span><span>Therapy Mode™</span><span class="pf-tag">ULTRA</span>
+      </div>
+      <div class="pf" onclick="locked('RGB on RGB™')">
+        <span class="pf-lock">🔒</span><span>RGB on RGB™</span><span class="pf-tag">ULTRA</span>
+      </div>
+      <div class="pf" onclick="locked('Firmware Downgrade')">
+        <span class="pf-lock">🔒</span><span>Firmware Downgrade</span><span class="pf-tag">ULTRA</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main content -->
+  <div class="content">
+    <div class="panel">
+      <div class="panel-hd">
+        <div class="panel-title">Chroma™ Lighting Command Center Ultra Pro</div>
+      </div>
+      <div class="panel-bd">
+
+        <!-- Zone tabs -->
+        <div class="tabs" id="zone-tabs">
+          <button class="tab on" onclick="setZone('backlight',this)">Backlight</button>
+          <button class="tab" onclick="setZone('logo',this)">Logo</button>
+          <button class="tab" onclick="setZone('scroll',this)">Scroll</button>
+        </div>
+
+        <!-- Effect buttons -->
+        <div class="fx-grid">
+          <button class="fx-btn on"  onclick="setFx('none',this)">Off</button>
+          <button class="fx-btn"     onclick="setFx('spectrum',this)">Spectrum</button>
+          <button class="fx-btn"     onclick="setFx('static',this)">Static</button>
+          <button class="fx-btn"     onclick="setFx('wave',this)">Wave</button>
+          <button class="fx-btn"     onclick="setFx('breath_random',this)">Breath Rnd</button>
+          <button class="fx-btn"     onclick="setFx('breath_single',this)">Breath</button>
+          <button class="fx-btn"     onclick="setFx('breath_dual',this)">Breath Dual</button>
+          <button class="fx-btn"     onclick="setFx('reactive',this)">Reactive</button>
+          <button class="fx-btn"     onclick="setFx('starlight_random',this)">Star Rnd</button>
+          <button class="fx-btn"     onclick="setFx('starlight_single',this)">Starlight</button>
+          <button class="fx-btn"     onclick="setFx('starlight_dual',this)">Star Dual</button>
+        </div>
+
+        <!-- Per-effect params -->
+        <div class="params" id="p-static">
+          <div class="prow">
+            <span class="plabel">Color</span>
+            <input type="color" id="static-c" value="#44d62c">
+          </div>
+        </div>
+
+        <div class="params" id="p-wave">
+          <div class="prow">
+            <span class="plabel">Direction</span>
+            <select id="wave-dir">
+              <option value="1">Right →</option>
+              <option value="2">Left ←</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="params" id="p-breath_single">
+          <div class="prow">
+            <span class="plabel">Color</span>
+            <input type="color" id="breath1-c" value="#44d62c">
+          </div>
+        </div>
+
+        <div class="params" id="p-breath_dual">
+          <div class="prow">
+            <span class="plabel">Color 1</span>
+            <input type="color" id="breath2-c1" value="#44d62c">
+            <span class="plabel">Color 2</span>
+            <input type="color" id="breath2-c2" value="#cc0060">
+          </div>
+        </div>
+
+        <div class="params" id="p-reactive">
+          <div class="prow">
+            <span class="plabel">Color</span>
+            <input type="color" id="react-c" value="#44d62c">
+            <span class="plabel">Speed</span>
+            <select id="react-spd">
+              <option value="1">1 — Instant</option>
+              <option value="2" selected>2 — Fast</option>
+              <option value="3">3 — Medium</option>
+              <option value="4">4 — Slow</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="params" id="p-starlight_single">
+          <div class="prow">
+            <span class="plabel">Color</span>
+            <input type="color" id="star1-c" value="#ffffff">
+            <span class="plabel">Speed</span>
+            <select id="star1-spd">
+              <option value="1" selected>1 — Fast</option>
+              <option value="2">2 — Medium</option>
+              <option value="3">3 — Slow</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="params" id="p-starlight_dual">
+          <div class="prow">
+            <span class="plabel">Color 1</span>
+            <input type="color" id="star2-c1" value="#ffffff">
+            <span class="plabel">Color 2</span>
+            <input type="color" id="star2-c2" value="#44d62c">
+          </div>
+          <div class="prow">
+            <span class="plabel">Speed</span>
+            <select id="star2-spd">
+              <option value="1" selected>1 — Fast</option>
+              <option value="2">2 — Medium</option>
+              <option value="3">3 — Slow</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Brightness -->
+        <div class="brow">
+          <span class="plabel">Brightness</span>
+          <input type="range" id="bright" min="0" max="100" value="100"
+                 oninput="document.getElementById('bval').textContent=this.value+'%'">
+          <span class="bval" id="bval">100%</span>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="btn-row">
+          <button class="btn btn-primary" id="apply-btn" onclick="applyFx()" disabled>Apply Effect™</button>
+          <button class="btn btn-ghost" id="bright-btn" onclick="applyBright()" disabled>Set Brightness</button>
+        </div>
+
+        <!-- Status -->
+        <div class="status">
+          <div class="sdot" id="sdot"></div>
+          <span id="stext">Waiting for device…</span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<footer>
+  <span>Synapless™ — Razer peripheral control without the 1.4 GB updater</span>
+  <span>Not affiliated with Razer Inc. All trademarks belong to their respective money-havers.</span>
+</footer>
+
+<script>
+// ── State ────────────────────────────────────────────────────────
+let serial = null;
+let zone = 'backlight';
+let fx = 'none';
+let hyperOn = false;
+
+// ── Boot sequence ────────────────────────────────────────────────
+const LOAD_MSGS = [
+  'Initializing gaming soul…',
+  'Loading 47 Chroma™ profiles you never made…',
+  'Phoning home (just kidding)…',
+  'Checking for updates (there are always updates)…',
+  'Almost done — calibrating synapse neural link™…',
+];
+const NOTIFS = [
+  'Synapse 5.3 update available — Added a third AI to the RGB. (1.4 GB)',
+  'Razer Cortex detected 0 fps gains. Our AI is still working on it.',
+  'Your Chroma profile was synced to the cloud. No one asked.',
+  'Join Razer Gold™ to unlock features you already paid for.',
+  'Synapse would like access to your webcam, mic, location, and soul.',
+  'Update: renamed "Off" to "Stealth Mode™". Zero functionality changes.',
+  'Reminder: your RGB is 100% not making you game better. (Source: Razer marketing team)',
+  'Did you know? Razer has released 14 versions of the same mouse. Congrats on owning one.',
+];
+
+window.addEventListener('load', async () => {
+  let i = 0;
+  const msg = document.getElementById('ov-msg');
+  const t = setInterval(() => { if (i < LOAD_MSGS.length) msg.textContent = LOAD_MSGS[i++]; }, 420);
+  await sleep(2500);
+  clearInterval(t);
+  document.getElementById('overlay').style.display = 'none';
+  await loadDevices();
+  rotateNotifs();
+});
+
+function rotateNotifs() {
+  let i = 1;
+  setInterval(() => {
+    document.getElementById('notif-text').textContent = NOTIFS[i++ % NOTIFS.length];
+  }, 9000);
+}
+
+// ── Device loading ────────────────────────────────────────────────
+async function loadDevices() {
+  try {
+    const res = await fetch('/api/v1/devices');
+    const { devices } = await res.json();
+    const panel = document.getElementById('dev-panel');
+
+    if (!devices.length) {
+      panel.innerHTML = '<div class="no-dev">No devices found.<br><br><small style="color:#333">Have you tried turning it off<br>and on again™?</small></div>';
+      status('err', 'No Razer devices detected');
+      return;
+    }
+
+    const dev = devices[0];
+    serial = dev.serial;
+
+    panel.innerHTML = `
+      <div class="dev-card live">
+        <div class="dev-name"><span class="dev-dot live"></span>${dev.product}</div>
+        <div class="dev-row"><span>Serial</span><span class="v">${dev.serial}</span></div>
+        <div class="dev-row"><span>Firmware</span><span class="v">${dev.firmware}</span></div>
+        <div class="dev-row"><span>Type</span><span class="v">${dev.type}</span></div>
+        ${dev.matrix_dims ? `<div class="dev-row"><span>Matrix</span><span class="v">${dev.matrix_dims.join('×')}</span></div>` : ''}
+        <div class="chroma-pill">✦ CHROMA™ CERTIFIED</div>
+      </div>`;
+
+    // Pull current brightness
+    const br = await fetch(`/api/v1/devices/${serial}/brightness`).then(r => r.json()).catch(() => null);
+    if (br) {
+      const v = Math.round(br.brightness);
+      document.getElementById('bright').value = v;
+      document.getElementById('bval').textContent = v + '%';
+    }
+
+    document.getElementById('apply-btn').disabled = false;
+    document.getElementById('bright-btn').disabled = false;
+    status('ok', dev.product + ' connected');
+  } catch (e) {
+    status('err', 'Failed to reach service: ' + e.message);
+  }
+}
+
+// ── Zone ─────────────────────────────────────────────────────────
+function setZone(z, btn) {
+  zone = z;
+  document.querySelectorAll('#zone-tabs .tab').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+// ── Effect ────────────────────────────────────────────────────────
+function setFx(effect, btn) {
+  fx = effect;
+  document.querySelectorAll('.fx-btn').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  document.querySelectorAll('.params').forEach(p => p.classList.remove('show'));
+  const p = document.getElementById('p-' + effect);
+  if (p) p.classList.add('show');
+}
+
+// ── Apply effect ──────────────────────────────────────────────────
+async function applyFx() {
+  if (!serial) return;
+  const zp = zone === 'backlight' ? '' : '/' + zone;
+  const base = `/api/v1/devices/${serial}/lighting${zp}`;
+  let url, body;
+
+  switch (fx) {
+    case 'none':            url = base + '/none';            break;
+    case 'spectrum':        url = base + '/spectrum';        break;
+    case 'breath_random':   url = base + '/breath/random';   break;
+    case 'starlight_random':url = base + '/starlight/random';break;
+    case 'wave':
+      url = base + '/wave';
+      body = { direction: +g('wave-dir') }; break;
+    case 'static':
+      url = base + '/static';
+      body = rgb('static-c'); break;
+    case 'breath_single':
+      url = base + '/breath/single';
+      body = rgb('breath1-c'); break;
+    case 'breath_dual':
+      url = base + '/breath/dual';
+      body = { ...rgb('breath2-c1', 1), ...rgb('breath2-c2', 2) }; break;
+    case 'reactive':
+      url = base + '/reactive';
+      body = { ...rgb('react-c'), speed: +g('react-spd') }; break;
+    case 'starlight_single':
+      url = base + '/starlight/single';
+      body = { ...rgb('star1-c'), speed: +g('star1-spd') }; break;
+    case 'starlight_dual':
+      url = base + '/starlight/dual';
+      body = { speed: +g('star2-spd'), ...rgb('star2-c1', 1), ...rgb('star2-c2', 2) }; break;
+    default: return;
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.ok) {
+      const label = fx.replace(/_/g, ' ');
+      status('ok', `Applied: ${label}${zone !== 'backlight' ? ' (' + zone + ')' : ''}`);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      status('err', 'Error: ' + (err.detail || res.status));
+    }
+  } catch (e) { status('err', 'Request failed: ' + e.message); }
+}
+
+async function applyBright() {
+  if (!serial) return;
+  const v = +document.getElementById('bright').value;
+  try {
+    const res = await fetch(`/api/v1/devices/${serial}/brightness`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brightness: v }),
+    });
+    status(res.ok ? 'ok' : 'err', res.ok ? `Brightness → ${v}%` : 'Brightness update failed');
+  } catch (e) { status('err', e.message); }
+}
+
+// ── Misc UI ───────────────────────────────────────────────────────
+function toggleHyper() {
+  hyperOn = !hyperOn;
+  const c = document.getElementById('hyper-chip');
+  c.textContent = 'HYPER MODE™: ' + (hyperOn ? 'ON' : 'OFF');
+  c.classList.toggle('on', hyperOn);
+  if (hyperOn) status('ok', 'HYPER MODE™ ENGAGED. Absolutely nothing changed.');
+}
+
+function locked(name) {
+  status('err', `${name} requires Razer Gold™. Not implemented. Will it ever be? No.`);
+}
+
+function status(type, msg) {
+  document.getElementById('sdot').className = 'sdot ' + type;
+  document.getElementById('stext').textContent = msg;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function g(id) { return document.getElementById(id).value; }
+function hex2rgb(hex) {
+  return { r: parseInt(hex.slice(1,3),16), g: parseInt(hex.slice(3,5),16), b: parseInt(hex.slice(5,7),16) };
+}
+function rgb(id, n) {
+  const c = hex2rgb(g(id));
+  if (!n) return c;
+  return { [`r${n}`]:c.r, [`g${n}`]:c.g, [`b${n}`]:c.b };
+}
+</script>
+</body>
+</html>
