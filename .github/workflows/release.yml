@@ -49,6 +49,7 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           files: dist/synapless.exe
           fail_on_unmatched_files: true
+          overwrite: true
           body: |
             ## synapless ${{ github.ref_name }}
 
