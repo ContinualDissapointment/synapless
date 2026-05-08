@@ -67,6 +67,6 @@ exe = EXE(
     upx=False,
     upx_exclude=[],
     console=True,
-    uac_admin=True,
+    uac_admin=False,
     icon=None,
 )
