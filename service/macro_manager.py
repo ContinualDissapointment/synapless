@@ -9,24 +9,28 @@ Modes:
                Sequence format: "ctrl+c:150, f5:80, enter"
                where :N is the delay in ms after that keystroke
 
-Architecture (Windows):
-  _RawInputWindow runs in its own thread with RIDEV_INPUTSINK and receives
-  WM_INPUT for every physical keypress, including the originating hDevice.
-  _KeyHook installs WH_KEYBOARD_LL in a second thread.
+Architecture (Windows) — two tiers:
 
-  Critical constraint: suppressing a key in WH_KEYBOARD_LL (returning non-zero)
-  prevents Windows from posting WM_INPUT for that key to any window, regardless
-  of thread.  We therefore use stale-data discrimination:
+  Tier 1 (kernel filter, preferred):
+    If kbfiltr.sys is installed and running, MacroManager opens
+    \\.\SynaplessFilter and uses it exclusively.  The driver suppresses macro
+    keys at DISPATCH_LEVEL before they reach any usermode application and
+    delivers SYNAPLESS_KEY_EVENT structs via ReadFile.  This gives clean,
+    per-device suppression with no first-press artifact.
 
-    1. WM_INPUT fires when the hook passes through (first Tartarus press per idle
-       period) → records _tartarus_keys[vk] = timestamp + fires macro callback.
-    2. On subsequent presses, the hook finds a fresh entry in _tartarus_keys,
-       suppresses the key, fires the macro itself, and refreshes the entry.
+  Tier 2 (hook fallback):
+    When the driver is not available, _RawInputWindow (RIDEV_INPUTSINK) and
+    _KeyHook (WH_KEYBOARD_LL) cooperate using stale-data discrimination:
 
-  Consequence: the very first Tartarus press after a >1s idle period will also
-  type the trigger key (e.g. "1" then "q").  Every press after that is clean.
-  Regular-keyboard presses of the same key that arrive within 1s of a Tartarus
-  press are (rarely) suppressed; presses outside that window pass through.
+    Critical constraint: suppressing a key in WH_KEYBOARD_LL prevents Windows
+    from posting WM_INPUT for that key, regardless of thread.  We therefore
+    allow the first Tartarus press per idle period to pass through so WM_INPUT
+    fires, records vk → timestamp, and fires the macro.  Subsequent presses
+    within _TARTARUS_WINDOW are suppressed by the hook.
+
+    Consequence: the very first Tartarus press after a >1s idle period also
+    types the trigger key (e.g. "1" then "q").  Every press after that is
+    clean.
 """
 
 import ctypes
@@ -38,6 +42,13 @@ import pathlib
 import threading
 import time as _time
 from typing import Optional
+
+try:
+    from .kbfiltr_client import KbfiltrClient
+    _KBFILTR_AVAILABLE = True
+except Exception:
+    _KBFILTR_AVAILABLE = False
+    KbfiltrClient = None  # type: ignore[assignment,misc]
 
 log = logging.getLogger(__name__)
 
@@ -655,6 +666,53 @@ class _KeyHook:
         return _u32.CallNextHookEx(None, code, wparam, lparam)
 
 
+# ── Kernel filter (Tier 1) ────────────────────────────────────────────────────
+
+class _KernelFilter:
+    """
+    Uses kbfiltr.sys via KbfiltrClient.
+
+    The driver suppresses macro keys in the kernel and delivers them here via
+    ReadFile.  No WH_KEYBOARD_LL hook or RawInput window is needed.
+    """
+
+    def __init__(self, on_press, on_release):
+        self._on_press   = on_press
+        self._on_release = on_release
+        self._macro_keys: set = set()
+        self._lock   = threading.Lock()
+        self._client = KbfiltrClient()
+        self._thread: Optional[threading.Thread] = None
+
+    def set_macro_keys(self, keys: set):
+        with self._lock:
+            self._macro_keys = keys
+        if self._client.is_open:
+            self._client.set_macro_keys(keys)
+
+    def start(self) -> bool:
+        """Open the device and start the reader thread.  Returns False if not available."""
+        if not self._client.open():
+            return False
+        with self._lock:
+            keys = self._macro_keys
+        self._client.set_macro_keys(keys)
+        self._thread = threading.Thread(target=self._run, name='KernelFilter', daemon=True)
+        self._thread.start()
+        log.info("MacroManager: kernel filter active (kbfiltr.sys)")
+        return True
+
+    def stop(self):
+        self._client.close()  # unblocks read_events loop
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _run(self):
+        for name, is_keyup in self._client.read_events():
+            target = self._on_release if is_keyup else self._on_press
+            threading.Thread(target=target, args=(name,), daemon=True).start()
+
+
 # ── Manager ────────────────────────────────────────────────────────────────────
 
 class MacroManager:
@@ -663,6 +721,7 @@ class MacroManager:
         self._active: set = set()
         self._threads: dict = {}
         self._lock = threading.Lock()
+        self._kernel: Optional[_KernelFilter] = None
         self._raw_win: Optional[_RawInputWindow] = None
         self._hook: Optional[_KeyHook] = None
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -682,6 +741,8 @@ class MacroManager:
 
     def _sync_hook_keys(self):
         keys = set(self._macros.keys())
+        if self._kernel:
+            self._kernel.set_macro_keys(keys)
         if self._raw_win:
             self._raw_win.set_macro_keys(keys)
         if self._hook:
@@ -719,14 +780,27 @@ class MacroManager:
         if not _PYNPUT:
             log.warning("Macros disabled — pynput not available")
             return
+
+        # Tier 1: kernel driver (clean per-device suppression, no first-press artifact)
+        if _KBFILTR_AVAILABLE:
+            self._kernel = _KernelFilter(self._on_press, self._on_release)
+            self._sync_hook_keys()
+            if self._kernel.start():
+                return  # driver running — hook fallback not needed
+
+            self._kernel = None
+
+        # Tier 2: userspace hook + Raw Input fallback
+        log.info("MacroManager: kbfiltr.sys not available — using hook fallback")
         self._raw_win = _RawInputWindow(self._on_press, self._on_release)
         self._hook    = _KeyHook(self._on_press, self._on_release)
         self._sync_hook_keys()
-        self._raw_win.start()   # blocks until window created + RIDEV registered
+        self._raw_win.start()
         self._hook.start()
-        log.info("MacroManager started")
 
     def stop(self):
+        if self._kernel:
+            self._kernel.stop()
         if self._hook:
             self._hook.stop()
         if self._raw_win:

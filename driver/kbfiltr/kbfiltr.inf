@@ -1,0 +1,76 @@
+; kbfiltr.inf — installs kbfiltr.sys as an upper filter on Razer Tartarus Pro
+; keyboard HID interfaces.
+;
+; Install (elevated):  pnputil /add-driver kbfiltr.inf /install
+; Remove:              pnputil /delete-driver kbfiltr.inf
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = HIDClass
+ClassGuid   = {745a17a0-74d3-11d0-b6fe-00a0c90f57da}
+Provider    = %ProviderName%
+DriverVer   = 05/08/2026,1.0.0.0
+CatalogFile = kbfiltr.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+KbFilter.CopyFiles = 12   ; %SystemRoot%\System32\drivers
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+kbfiltr.sys = 1
+
+; ── Manufacturer / Models ──────────────────────────────────────────────────────
+
+[Manufacturer]
+%ProviderName% = Synapless, NTamd64
+
+[Synapless.NTamd64]
+%DeviceDesc% = KbFilter_Inst, HID\VID_1532&PID_0244&MI_00
+%DeviceDesc% = KbFilter_Inst, HID\VID_1532&PID_0244&MI_01
+
+; ── Install section ────────────────────────────────────────────────────────────
+
+[KbFilter_Inst.NT]
+CopyFiles = KbFilter.CopyFiles
+
+[KbFilter.CopyFiles]
+kbfiltr.sys,,,0x00000040   ; COPYFLG_OVERWRITE_OLDER_ONLY
+
+; ── AddReg: insert kbfiltr into UpperFilters for the matched device ────────────
+
+[KbFilter_Inst.NT.AddReg]
+; REG_MULTI_SZ | FLG_ADDREG_APPEND — appends rather than overwriting
+HKR,,"UpperFilters",0x00010008,"kbfiltr"
+
+; ── Services ──────────────────────────────────────────────────────────────────
+
+[KbFilter_Inst.NT.Services]
+AddService = kbfiltr,  %SPSVCINST_ASSOCSERVICE%, KbFilter_Service_Inst
+AddService = kbdclass, , KbdClass_Service_Inst
+
+[KbFilter_Service_Inst]
+DisplayName   = %ServiceDesc%
+ServiceType   = 1        ; SERVICE_KERNEL_DRIVER
+StartType     = 3        ; SERVICE_DEMAND_START
+ErrorControl  = 1        ; SERVICE_ERROR_NORMAL
+ServiceBinary = %12%\kbfiltr.sys
+LoadOrderGroup = Keyboard Port
+
+[KbdClass_Service_Inst]
+ServiceType    = 1
+StartType      = 1       ; SERVICE_SYSTEM_START
+ErrorControl   = 1
+ServiceBinary  = %10%\System32\drivers\kbdclass.sys
+LoadOrderGroup = Keyboard Class
+
+; ── Strings ────────────────────────────────────────────────────────────────────
+
+[Strings]
+ProviderName            = "Synapless"
+DeviceDesc              = "Synapless Keyboard Filter"
+ServiceDesc             = "Synapless Keyboard Filter Driver"
+DiskName                = "Synapless Driver Disk"
+SPSVCINST_ASSOCSERVICE  = 0x00000002
