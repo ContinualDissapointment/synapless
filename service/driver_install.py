@@ -1,43 +1,51 @@
 """
 driver_install.py — install / uninstall / query kbfiltr.sys.
 
+Uses direct SCM registration + registry UpperFilters update.  Does NOT use
+pnputil (which requires a signed/cataloged driver even in test-signing mode).
+Test-signing mode IS required; without it the kernel refuses to load the driver.
+
 All functions that modify system state require elevation (run as Administrator).
 
 CLI usage:
-    python -m service.driver_install install
-    python -m service.driver_install uninstall
-    python -m service.driver_install status
-    python -m service.driver_install testsign    # enable test-signing mode (needs reboot)
+    python -m service.driver_install testsign    # enable test-signing (reboot required)
+    python -m service.driver_install install     # copy .sys, register service, set UpperFilters
+    python -m service.driver_install uninstall   # undo everything
+    python -m service.driver_install status      # check current state
 """
 
 import ctypes
 import ctypes.wintypes
 import logging
 import pathlib
-import re
+import shutil
 import subprocess
 import sys
+import winreg
 from typing import Optional
 
 log = logging.getLogger(__name__)
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-# service/ → project root → driver/kbfiltr/
 _SERVICE_DIR = pathlib.Path(__file__).parent
 _DRIVER_DIR  = _SERVICE_DIR.parent / "driver" / "kbfiltr"
-_INF_PATH    = _DRIVER_DIR / "kbfiltr.inf"
-_SYS_PATH    = _DRIVER_DIR / "kbfiltr.sys"
+_SYS_SRC     = _DRIVER_DIR / "kbfiltr.sys"
+_SYS_DEST    = pathlib.Path(r"C:\Windows\System32\drivers\kbfiltr.sys")
+
+_SERVICE_NAME    = "kbfiltr"
+_SERVICE_DISPLAY = "Synapless Keyboard Filter"
+
+# Razer Tartarus Pro — both HID keyboard interfaces
+_RAZER_HW_IDS = [
+    "VID_1532&PID_0244&MI_00",
+    "VID_1532&PID_0244&MI_01",
+]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _run(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        check=check,
-    )
+def _run(args: list[str], check: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(args, capture_output=True, text=True, check=check)
 
 
 def is_elevated() -> bool:
@@ -59,25 +67,14 @@ _k32.CreateFileW.argtypes = [
 _k32.CloseHandle.restype  = ctypes.wintypes.BOOL
 _k32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
 
-_INVALID_HANDLE  = ctypes.wintypes.HANDLE(-1).value
-GENERIC_READ     = 0x80000000
-GENERIC_WRITE    = 0x40000000
-FILE_SHARE_RW    = 0x00000003
-OPEN_EXISTING    = 3
-FILE_ATTRIBUTE_NORMAL = 0x80
-DEVICE_PATH      = r"\\.\SynaplessFilter"
+_INVALID_HANDLE = ctypes.wintypes.HANDLE(-1).value
+DEVICE_PATH = r"\\.\SynaplessFilter"
 
 
 def is_driver_loaded() -> bool:
-    """Return True if kbfiltr.sys is running and the control device is reachable."""
+    """Return True if kbfiltr.sys is running and \\.\SynaplessFilter is reachable."""
     h = _k32.CreateFileW(
-        DEVICE_PATH,
-        GENERIC_READ | GENERIC_WRITE,
-        FILE_SHARE_RW,
-        None,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        None,
+        DEVICE_PATH, 0xC0000000, 0x03, None, 3, 0x80, None,
     )
     if h == _INVALID_HANDLE:
         return False
@@ -85,130 +82,240 @@ def is_driver_loaded() -> bool:
     return True
 
 
-# ── pnputil wrappers ──────────────────────────────────────────────────────────
+# ── Registry helpers ──────────────────────────────────────────────────────────
 
-def _find_oem_inf() -> Optional[str]:
-    """Return the OEM INF name (e.g. 'oem42.inf') staged for kbfiltr, or None."""
-    try:
-        result = _run(["pnputil", "/enum-drivers"])
-        # pnputil output has blocks like:
-        #   Published Name:     oem42.inf
-        #   Original Name:      kbfiltr.inf
-        blocks = result.stdout.split("\n\n")
-        for block in blocks:
-            if "kbfiltr.inf" in block.lower():
-                for line in block.splitlines():
-                    m = re.match(r"Published Name\s*:\s*(oem\d+\.inf)", line, re.IGNORECASE)
-                    if m:
-                        return m.group(1)
-    except Exception as e:
-        log.debug("pnputil enum-drivers failed: %s", e)
-    return None
-
-
-def install_driver(inf_path: Optional[pathlib.Path] = None) -> bool:
+def _enum_device_instances(hw_id_suffix: str) -> list[str]:
     """
-    Stage and install kbfiltr.inf via pnputil.
-    Requires elevation and test-signing mode (or attestation-signed driver).
-    Returns True on success.
+    Return full registry paths of device instances whose hardware ID list
+    contains the given hw_id_suffix (e.g. 'VID_1532&PID_0244&MI_00').
+    """
+    base = r"SYSTEM\CurrentControlSet\Enum\HID"
+    results = []
+    try:
+        hive = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base)
+    except OSError:
+        return results
+
+    suffix_upper = hw_id_suffix.upper()
+    i = 0
+    while True:
+        try:
+            dev_id = winreg.EnumKey(hive, i)
+        except OSError:
+            break
+        i += 1
+        if suffix_upper not in dev_id.upper():
+            continue
+        try:
+            dev_key = winreg.OpenKey(hive, dev_id)
+        except OSError:
+            continue
+        j = 0
+        while True:
+            try:
+                inst_id = winreg.EnumKey(dev_key, j)
+            except OSError:
+                break
+            j += 1
+            results.append(rf"{base}\{dev_id}\{inst_id}")
+        winreg.CloseKey(dev_key)
+    winreg.CloseKey(hive)
+    return results
+
+
+def _get_upper_filters(inst_path: str) -> list[str]:
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, inst_path)
+        val, _ = winreg.QueryValueEx(key, "UpperFilters")
+        winreg.CloseKey(key)
+        return list(val) if val else []
+    except OSError:
+        return []
+
+
+def _set_upper_filters(inst_path: str, values: list[str]):
+    key = winreg.OpenKey(
+        winreg.HKEY_LOCAL_MACHINE, inst_path,
+        0, winreg.KEY_SET_VALUE,
+    )
+    winreg.SetValueEx(key, "UpperFilters", 0, winreg.REG_MULTI_SZ, values)
+    winreg.CloseKey(key)
+
+
+# ── SCM service management ────────────────────────────────────────────────────
+
+def _sc(*args) -> tuple[int, str]:
+    """Run sc.exe and return (returncode, stdout+stderr)."""
+    r = _run(["sc"] + list(args))
+    out = (r.stdout + r.stderr).strip()
+    return r.returncode, out
+
+
+def _service_exists() -> bool:
+    rc, _ = _sc("query", _SERVICE_NAME)
+    return rc == 0
+
+
+def _create_service() -> bool:
+    rc, out = _sc(
+        "create", _SERVICE_NAME,
+        "type=", "kernel",
+        "start=", "demand",
+        "error=", "normal",
+        "binpath=", str(_SYS_DEST),
+        "displayname=", _SERVICE_DISPLAY,
+        "group=", "Keyboard Port",
+    )
+    if rc != 0:
+        log.error("sc create failed (rc=%d): %s", rc, out)
+        return False
+    return True
+
+
+def _delete_service() -> bool:
+    rc, out = _sc("delete", _SERVICE_NAME)
+    if rc != 0 and "1060" not in out:  # 1060 = service does not exist
+        log.error("sc delete failed (rc=%d): %s", rc, out)
+        return False
+    return True
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def install_driver() -> bool:
+    """
+    Copy kbfiltr.sys → System32\\drivers, register the SCM service, and
+    add 'kbfiltr' to UpperFilters for each matched Tartarus device instance.
+
+    Requires elevation and test-signing mode.
+    After install the Tartarus must be unplugged and replugged once.
     """
     if not is_elevated():
         log.error("install_driver requires elevation (run as Administrator)")
         return False
-
-    inf = inf_path or _INF_PATH
-    if not inf.exists():
-        log.error("INF not found: %s", inf)
-        return False
-    if not _SYS_PATH.exists():
-        log.error("kbfiltr.sys not found: %s", _SYS_PATH)
+    if not _SYS_SRC.exists():
+        log.error("kbfiltr.sys not found at %s — build it first (cd driver/kbfiltr && build.bat)", _SYS_SRC)
         return False
 
-    log.info("Installing driver from %s ...", inf)
+    # 1. Copy driver binary
+    log.info("Copying %s → %s", _SYS_SRC, _SYS_DEST)
     try:
-        result = _run([
-            "pnputil", "/add-driver", str(inf), "/install", "/subdirs",
-        ], check=False)
-        log.debug("pnputil stdout: %s", result.stdout.strip())
-        if result.returncode not in (0, 259):  # 259 = ERROR_NO_MORE_ITEMS (no matching device yet)
-            log.error("pnputil failed (rc=%d): %s", result.returncode, result.stderr.strip())
-            return False
-        log.info("Driver installed successfully")
-        return True
-    except FileNotFoundError:
-        log.error("pnputil not found — is this Windows?")
+        shutil.copy2(_SYS_SRC, _SYS_DEST)
+    except PermissionError as e:
+        log.error("Cannot copy driver: %s", e)
         return False
+
+    # 2. Register SCM service (idempotent)
+    if _service_exists():
+        log.info("Service '%s' already exists — skipping sc create", _SERVICE_NAME)
+    else:
+        log.info("Creating SCM service '%s'", _SERVICE_NAME)
+        if not _create_service():
+            return False
+
+    # 3. Add kbfiltr to UpperFilters for each Tartarus device instance
+    found_any = False
+    for hw_id in _RAZER_HW_IDS:
+        for inst_path in _enum_device_instances(hw_id):
+            found_any = True
+            filters = _get_upper_filters(inst_path)
+            if _SERVICE_NAME in filters:
+                log.info("UpperFilters already set for %s", inst_path)
+                continue
+            filters.append(_SERVICE_NAME)
+            try:
+                _set_upper_filters(inst_path, filters)
+                log.info("Set UpperFilters on %s → %s", inst_path, filters)
+            except PermissionError as e:
+                log.error("Cannot write UpperFilters for %s: %s", inst_path, e)
+                return False
+
+    if not found_any:
+        log.warning(
+            "No Tartarus Pro device instances found in registry. "
+            "Plug in the device, then re-run install."
+        )
+    else:
+        log.info(
+            "Install complete.  Unplug and replug the Tartarus Pro to load the filter."
+        )
+    return True
 
 
 def uninstall_driver() -> bool:
-    """
-    Remove kbfiltr from the driver store and all matched devices.
-    Requires elevation.
-    """
+    """Remove UpperFilters entries, delete the SCM service, and remove the .sys file."""
     if not is_elevated():
         log.error("uninstall_driver requires elevation")
         return False
 
-    oem = _find_oem_inf()
-    if not oem:
-        log.info("kbfiltr driver not found in driver store — nothing to remove")
-        return True
+    # 1. Remove UpperFilters
+    for hw_id in _RAZER_HW_IDS:
+        for inst_path in _enum_device_instances(hw_id):
+            filters = _get_upper_filters(inst_path)
+            if _SERVICE_NAME not in filters:
+                continue
+            filters = [f for f in filters if f != _SERVICE_NAME]
+            try:
+                _set_upper_filters(inst_path, filters)
+                log.info("Removed kbfiltr from UpperFilters: %s", inst_path)
+            except PermissionError as e:
+                log.error("Cannot update UpperFilters for %s: %s", inst_path, e)
 
-    log.info("Removing driver %s ...", oem)
-    try:
-        result = _run([
-            "pnputil", "/delete-driver", oem, "/uninstall", "/force",
-        ], check=False)
-        if result.returncode != 0:
-            log.error("pnputil delete-driver failed (rc=%d): %s",
-                      result.returncode, result.stderr.strip())
-            return False
-        log.info("Driver removed")
-        return True
-    except FileNotFoundError:
-        log.error("pnputil not found")
-        return False
+    # 2. Delete service
+    log.info("Deleting SCM service '%s'", _SERVICE_NAME)
+    _delete_service()
+
+    # 3. Remove .sys
+    if _SYS_DEST.exists():
+        try:
+            _SYS_DEST.unlink()
+            log.info("Removed %s", _SYS_DEST)
+        except PermissionError:
+            log.warning(
+                "Cannot remove %s while driver is loaded — reboot and retry uninstall",
+                _SYS_DEST,
+            )
+
+    log.info("Uninstall complete.  Replug the Tartarus Pro to restore normal operation.")
+    return True
 
 
-def driver_store_info() -> dict:
-    """Return a dict with staged OEM INF name and whether the device is reachable."""
+def driver_status() -> dict:
+    instances: list[str] = []
+    for hw_id in _RAZER_HW_IDS:
+        instances.extend(_enum_device_instances(hw_id))
+
+    filtered = [p for p in instances if _SERVICE_NAME in _get_upper_filters(p)]
     return {
-        "oem_inf":  _find_oem_inf(),
-        "loaded":   is_driver_loaded(),
-        "inf_path": str(_INF_PATH),
-        "sys_path": str(_SYS_PATH),
-        "sys_exists": _SYS_PATH.exists(),
+        "sys_built":         _SYS_SRC.exists(),
+        "sys_deployed":      _SYS_DEST.exists(),
+        "service_exists":    _service_exists(),
+        "device_loaded":     is_driver_loaded(),
+        "device_instances":  instances,
+        "filtered_instances": filtered,
+        "test_signing":      _is_test_signing_on(),
     }
 
 
 # ── Test-signing mode ─────────────────────────────────────────────────────────
 
 def enable_test_signing() -> bool:
-    """
-    Enable Windows test-signing boot option (bcdedit /set testsigning on).
-    Requires elevation.  A reboot is required for the change to take effect.
-    """
+    """bcdedit /set testsigning on — requires elevation + reboot."""
     if not is_elevated():
         log.error("enable_test_signing requires elevation")
         return False
-    try:
-        result = _run(["bcdedit", "/set", "testsigning", "on"], check=False)
-        if result.returncode != 0:
-            log.error("bcdedit failed (rc=%d): %s", result.returncode, result.stderr.strip())
-            return False
-        log.info("Test-signing enabled — reboot required")
-        return True
-    except FileNotFoundError:
-        log.error("bcdedit not found")
+    r = _run(["bcdedit", "/set", "testsigning", "on"])
+    if r.returncode != 0:
+        log.error("bcdedit failed: %s", (r.stdout + r.stderr).strip())
         return False
+    log.info("Test-signing enabled.  Reboot to apply.")
+    return True
 
 
-def is_test_signing_on() -> bool:
-    try:
-        result = _run(["bcdedit", "/enum", "{current}"], check=False)
-        return "testsigning" in result.stdout.lower() and "yes" in result.stdout.lower()
-    except Exception:
-        return False
+def _is_test_signing_on() -> bool:
+    r = _run(["bcdedit", "/enum", "{current}"])
+    text = r.stdout.lower()
+    return "testsigning" in text and "yes" in text
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -218,24 +325,27 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
 
     if cmd == "status":
-        info = driver_store_info()
-        print(f"kbfiltr.sys built : {info['sys_exists']}  ({info['sys_path']})")
-        print(f"Staged OEM INF    : {info['oem_inf'] or '(not staged)'}")
-        print(f"Device reachable  : {info['loaded']}")
-        print(f"Test signing      : {'on' if is_test_signing_on() else 'off'}")
+        s = driver_status()
+        print(f"kbfiltr.sys built      : {s['sys_built']}  ({_SYS_SRC})")
+        print(f"kbfiltr.sys deployed   : {s['sys_deployed']}  ({_SYS_DEST})")
+        print(f"SCM service exists     : {s['service_exists']}")
+        print(f"Device reachable       : {s['device_loaded']}")
+        print(f"Test signing           : {'on' if s['test_signing'] else 'off'}")
+        print(f"Device instances found : {len(s['device_instances'])}")
+        print(f"  filtered by kbfiltr  : {len(s['filtered_instances'])}")
+        for p in s['filtered_instances']:
+            print(f"    {p}")
 
     elif cmd == "install":
-        ok = install_driver()
-        sys.exit(0 if ok else 1)
+        sys.exit(0 if install_driver() else 1)
 
     elif cmd == "uninstall":
-        ok = uninstall_driver()
-        sys.exit(0 if ok else 1)
+        sys.exit(0 if uninstall_driver() else 1)
 
     elif cmd == "testsign":
         ok = enable_test_signing()
         if ok:
-            print("Test-signing enabled.  Reboot now to apply.")
+            print("Reboot now, then run:  python -m service.driver_install install")
         sys.exit(0 if ok else 1)
 
     else:
