@@ -38,11 +38,12 @@ _SERVICE_NAME    = "synflt"         # current name
 _SERVICE_DISPLAY = "Synapless Keyboard Filter"
 _LEGACY_NAMES    = ["kbfiltr", "kbflt"]  # old names to scrub from UpperFilters on install
 
-# Razer Tartarus Pro — main keyboard interface only.
-# MI_01 and its collection children (MI_01&Col01-06) only generate HID report
-# reads; restricting to MI_00 avoids unnecessary filter attachment on those nodes.
+# Razer Tartarus Pro — both keyboard HID interfaces.
+# MI_00 is the primary kbdhid interface; MI_01&Col01 is the secondary one.
+# Both fire a keypress for every physical button, so both need UpperFilters.
 _RAZER_HW_IDS = [
     "VID_1532&PID_0244&MI_00",
+    "VID_1532&PID_0244&MI_01&Col01",
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

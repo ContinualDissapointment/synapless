@@ -15,7 +15,10 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=hid_binaries + pynput_binaries + [('hidapi.dll', '.')],
-    datas=hid_datas + pynput_datas + [('service/static', 'service/static')],
+    datas=hid_datas + pynput_datas + [
+        ('service/static', 'service/static'),
+        ('driver/kbfiltr/kbfiltr.sys', 'driver/kbfiltr'),
+    ],
     hiddenimports=hid_hidden + pynput_hidden + [
         # pywin32 service support
         'win32timezone',
