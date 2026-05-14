@@ -69,7 +69,8 @@ def run_service() -> None:
     t.start()
     log.info("openrazer-win running on http://%s:%d", HOST, PORT)
 
-    _shutdown_event.wait()
+    while not _shutdown_event.wait(timeout=0.5):
+        pass
 
     log.info("Shutdown requested, stopping...")
     server.should_exit = True
