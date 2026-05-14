@@ -3,6 +3,7 @@ setlocal
 
 rem ── Paths ─────────────────────────────────────────────────────────────────────
 set VS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat
+set VS_TOOLS=C:\Program Files\Microsoft Visual Studio\2022\Community
 set WINKIT=C:\Program Files (x86)\Windows Kits\10
 set WDKVER=10.0.26100.0
 
@@ -14,8 +15,16 @@ if not exist "%VS%" (
 rem ── Set up x64 compiler environment ──────────────────────────────────────────
 call "%VS%" x64 >nul 2>&1
 
+rem ── Locate MSVC version (needed for excpt.h and other CRT-adjacent headers) ──
+for /f "delims=" %%V in ('dir /b /ad "%VS_TOOLS%\VC\Tools\MSVC" 2^>nul ^| sort /r') do (
+    set MSVCVER=%%V & goto :found_msvc
+)
+:found_msvc
+set MSVC_INC=%VS_TOOLS%\VC\Tools\MSVC\%MSVCVER%\include
+
 rem ── Include and lib paths ────────────────────────────────────────────────────
-set INC=/I"%WINKIT%\Include\%WDKVER%\km" ^
+set INC=/I"%MSVC_INC%" ^
+        /I"%WINKIT%\Include\%WDKVER%\km" ^
         /I"%WINKIT%\Include\%WDKVER%\shared" ^
         /I"%WINKIT%\Include\%WDKVER%\ucrt"
 

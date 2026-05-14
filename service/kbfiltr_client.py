@@ -169,12 +169,18 @@ class KbfiltrClient:
     """
     Synchronous client for kbfiltr.sys.
 
+    Two handles are opened to the same device so that the blocking ReadFile
+    (read handle, FO_SYNCHRONOUS_IO lock held while IRP is pending) does not
+    serialize against DeviceIoControl calls (ioctl handle, separate file object
+    with its own lock).
+
     read_events() blocks; run it in a dedicated daemon thread.
-    Closing the handle from another thread will unblock ReadFile and stop the loop.
+    Closing the handles from another thread will unblock ReadFile and stop the loop.
     """
 
     def __init__(self):
-        self._handle: Optional[int] = None
+        self._handle: Optional[int] = None        # read handle
+        self._ioctl_handle: Optional[int] = None  # ioctl-only handle
 
     @property
     def is_open(self) -> bool:
@@ -182,23 +188,38 @@ class KbfiltrClient:
 
     def open(self) -> bool:
         """
-        Open \\.\SynaplessFilter.
+        Open \\.\SynaplessFilter (two handles).
         Returns True on success, False if the driver is not loaded.
         """
-        h = _k32.CreateFileW(
-            DEVICE_PATH,
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            None,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            None,
-        )
-        if h == _INVALID_HANDLE:
+        def _open_one() -> Optional[int]:
+            h = _k32.CreateFileW(
+                DEVICE_PATH,
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                None,
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                None,
+            )
+            return None if h == _INVALID_HANDLE else h
+
+        h_read = _open_one()
+        if h_read is None:
             err = ctypes.get_last_error()
-            log.debug("Cannot open %s (error %d) — kernel filter not active", DEVICE_PATH, err)
+            log.warning("Cannot open %s (error %d) — kernel filter not active "
+                        "(error 5=access denied: run service as Administrator, or "
+                        "rebuild driver with IoCreateDeviceSecure)", DEVICE_PATH, err)
             return False
-        self._handle = h
+
+        h_ioctl = _open_one()
+        if h_ioctl is None:
+            err = ctypes.get_last_error()
+            log.warning("Cannot open second handle to %s (error %d)", DEVICE_PATH, err)
+            _k32.CloseHandle(h_read)
+            return False
+
+        self._handle = h_read
+        self._ioctl_handle = h_ioctl
         log.info("Opened kernel filter device %s", DEVICE_PATH)
         return True
 
@@ -208,7 +229,7 @@ class KbfiltrClient:
         Passing an empty set clears the driver's suppression list.
         Returns True on success.
         """
-        if not self._handle:
+        if not self._ioctl_handle:
             return False
 
         codes: list[int] = []
@@ -233,9 +254,11 @@ class KbfiltrClient:
             in_ptr = None
             in_sz  = 0
 
+        log.info("SET_MACRO_KEYS: sending %d code(s) to driver: %s",
+                 len(codes), [hex(c) for c in codes])
         bytes_ret = ctypes.wintypes.DWORD(0)
         ok = _k32.DeviceIoControl(
-            self._handle,
+            self._ioctl_handle,
             IOCTL_SYNAPLESS_SET_MACRO_KEYS,
             in_ptr, in_sz,
             None, 0,
@@ -245,7 +268,7 @@ class KbfiltrClient:
         if not ok:
             log.error("SET_MACRO_KEYS IOCTL failed (error %d)", ctypes.get_last_error())
             return False
-        log.debug("Sent %d macro scan code(s) to driver", len(codes))
+        log.info("SET_MACRO_KEYS: driver acknowledged %d code(s)", len(codes))
         return True
 
     def read_events(self) -> Generator[Tuple[str, bool], None, None]:
@@ -277,14 +300,20 @@ class KbfiltrClient:
 
             name = scan_code_to_name(event.MakeCode, event.Flags)
             if name is None:
-                log.debug("Unknown event: MakeCode=0x%02X Flags=0x%02X",
-                          event.MakeCode, event.Flags)
+                log.info("Driver event: MakeCode=0x%02X Flags=0x%02X → unknown key",
+                         event.MakeCode, event.Flags)
                 continue
+            log.info("Driver event: MakeCode=0x%02X Flags=0x%02X → %r keyup=%s",
+                     event.MakeCode, event.Flags, name, bool(event.Flags & KEY_BREAK))
             yield name, bool(event.Flags & KEY_BREAK)
 
     def close(self):
         if self._handle:
-            h = self._handle
-            self._handle = None  # signals read_events loop to stop
-            _k32.CloseHandle(h)
+            h_read  = self._handle
+            h_ioctl = self._ioctl_handle
+            self._handle       = None  # signals read_events loop to stop
+            self._ioctl_handle = None
+            _k32.CloseHandle(h_read)
+            if h_ioctl is not None:
+                _k32.CloseHandle(h_ioctl)
             log.info("Closed kernel filter device")

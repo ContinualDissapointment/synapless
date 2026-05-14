@@ -37,6 +37,15 @@
 #include <ntddkbd.h>
 #include "kbfiltr.h"
 
+/* ObSetSecurityObjectByPointer — not declared in wdm.h but exported from
+   ntoskrnl.exe.  Used to apply a NULL DACL to the control device so the
+   synapless service can open it without requiring administrator privileges. */
+NTSTATUS NTAPI ObSetSecurityObjectByPointer(
+    PVOID                Object,
+    SECURITY_INFORMATION SecurityInformation,
+    PSECURITY_DESCRIPTOR SecurityDescriptor
+);
+
 /* ── Constants ──────────────────────────────────────────────────────────────── */
 
 #define DRIVER_TAG    'lFbK'   /* pool tag: 'KbFl' reversed */
@@ -46,6 +55,7 @@ static const UNICODE_STRING gDeviceName =
     RTL_CONSTANT_STRING(L"\\Device\\SynaplessFilter");
 static const UNICODE_STRING gSymlinkName =
     RTL_CONSTANT_STRING(L"\\DosDevices\\SynaplessFilter");
+
 
 /* ── Device extensions ──────────────────────────────────────────────────────── */
 
@@ -320,7 +330,8 @@ NTSTATUS KbfiltrPower(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 
 NTSTATUS KbfiltrCreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
-    UNREFERENCED_PARAMETER(DeviceObject);
+    if (DeviceObject != gCtrlDevice)
+        return KbfiltrPassThrough(DeviceObject, Irp);
     Irp->IoStatus.Status      = STATUS_SUCCESS;
     Irp->IoStatus.Information = 0;
     IoCompleteRequest(Irp, IO_NO_INCREMENT);
@@ -330,8 +341,15 @@ NTSTATUS KbfiltrCreateClose(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 /* ReadFile — block until a suppressed key event is available. */
 NTSTATUS KbfiltrRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
-    PCTRL_EXT          ctrlExt = (PCTRL_EXT)DeviceObject->DeviceExtension;
-    PIO_STACK_LOCATION stack   = IoGetCurrentIrpStackLocation(Irp);
+    PCTRL_EXT          ctrlExt;
+    PIO_STACK_LOCATION stack;
+
+    /* Filter devices pass Read straight down (HID polls for reports this way). */
+    if (DeviceObject != gCtrlDevice)
+        return KbfiltrPassThrough(DeviceObject, Irp);
+
+    ctrlExt = (PCTRL_EXT)DeviceObject->DeviceExtension;
+    stack   = IoGetCurrentIrpStackLocation(Irp);
 
     if (stack->Parameters.Read.Length < sizeof(SYNAPLESS_KEY_EVENT)) {
         Irp->IoStatus.Status      = STATUS_BUFFER_TOO_SMALL;
@@ -349,10 +367,16 @@ NTSTATUS KbfiltrRead(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 /* DeviceIoControl — handle IOCTL_SYNAPLESS_SET_MACRO_KEYS. */
 NTSTATUS KbfiltrDeviceControl(PDEVICE_OBJECT DeviceObject, PIRP Irp)
 {
-    PCTRL_EXT          ctrlExt = (PCTRL_EXT)DeviceObject->DeviceExtension;
-    PIO_STACK_LOCATION stack   = IoGetCurrentIrpStackLocation(Irp);
+    PCTRL_EXT          ctrlExt;
+    PIO_STACK_LOCATION stack;
     NTSTATUS           status  = STATUS_SUCCESS;
     ULONG_PTR          info    = 0;
+
+    if (DeviceObject != gCtrlDevice)
+        return KbfiltrPassThrough(DeviceObject, Irp);
+
+    ctrlExt = (PCTRL_EXT)DeviceObject->DeviceExtension;
+    stack   = IoGetCurrentIrpStackLocation(Irp);
 
     if (stack->Parameters.DeviceIoControl.IoControlCode
             != IOCTL_SYNAPLESS_SET_MACRO_KEYS) {
@@ -444,6 +468,7 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
        register globally: KbfiltrCreateClose / Read / DeviceControl check
        whether DeviceObject == gCtrlDevice and fall through otherwise. */
     DriverObject->MajorFunction[IRP_MJ_CREATE]         = KbfiltrCreateClose;
+    DriverObject->MajorFunction[IRP_MJ_CLEANUP]        = KbfiltrCreateClose;
     DriverObject->MajorFunction[IRP_MJ_CLOSE]          = KbfiltrCreateClose;
     DriverObject->MajorFunction[IRP_MJ_READ]           = KbfiltrRead;
     DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = KbfiltrDeviceControl;
@@ -495,6 +520,23 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT DriverObject, PUNICODE_STRING RegistryPath)
     if (!NT_SUCCESS(status)) {
         IoDeleteDevice(gCtrlDevice);
         gCtrlDevice = NULL;
+        return status;
+    }
+
+    /* Grant all users read+write on the control device so the synapless
+       service can open \\.\SynaplessFilter without running elevated.
+       wdm.h only defines PSECURITY_DESCRIPTOR as PVOID, so we allocate a
+       raw buffer large enough for the opaque struct (40 bytes on x64). */
+    {
+        UCHAR                sdBuf[256];
+        PSECURITY_DESCRIPTOR psd = (PSECURITY_DESCRIPTOR)sdBuf;
+        RtlZeroMemory(sdBuf, sizeof(sdBuf));
+        if (NT_SUCCESS(RtlCreateSecurityDescriptor(
+                psd, SECURITY_DESCRIPTOR_REVISION))) {
+            RtlSetDaclSecurityDescriptor(psd, TRUE, NULL, FALSE);
+            ObSetSecurityObjectByPointer(
+                gCtrlDevice, DACL_SECURITY_INFORMATION, psd);
+        }
     }
 
     return status;

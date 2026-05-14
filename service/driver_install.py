@@ -12,6 +12,7 @@ CLI usage:
     python -m service.driver_install install     # copy .sys, register service, set UpperFilters
     python -m service.driver_install uninstall   # undo everything
     python -m service.driver_install status      # check current state
+    python -m service.driver_install clearflag   # clear INITSTARTFAILED (then replug device)
 """
 
 import ctypes
@@ -33,13 +34,15 @@ _DRIVER_DIR  = _SERVICE_DIR.parent / "driver" / "kbfiltr"
 _SYS_SRC     = _DRIVER_DIR / "kbfiltr.sys"
 _SYS_DEST    = pathlib.Path(r"C:\Windows\System32\drivers\kbfiltr.sys")
 
-_SERVICE_NAME    = "kbfiltr"
+_SERVICE_NAME    = "synflt"         # current name
 _SERVICE_DISPLAY = "Synapless Keyboard Filter"
+_LEGACY_NAMES    = ["kbfiltr", "kbflt"]  # old names to scrub from UpperFilters on install
 
-# Razer Tartarus Pro — both HID keyboard interfaces
+# Razer Tartarus Pro — main keyboard interface only.
+# MI_01 and its collection children (MI_01&Col01-06) only generate HID report
+# reads; restricting to MI_00 avoids unnecessary filter attachment on those nodes.
 _RAZER_HW_IDS = [
     "VID_1532&PID_0244&MI_00",
-    "VID_1532&PID_0244&MI_01",
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -104,7 +107,7 @@ def _enum_device_instances(hw_id_suffix: str) -> list[str]:
         except OSError:
             break
         i += 1
-        if suffix_upper not in dev_id.upper():
+        if dev_id.upper() != suffix_upper:   # exact match — avoids MI_01&Col* children
             continue
         try:
             dev_key = winreg.OpenKey(hive, dev_id)
@@ -151,6 +154,89 @@ def _sc(*args) -> tuple[int, str]:
     return r.returncode, out
 
 
+def _enable_privilege(name: str):
+    """Enable a named privilege in the current process token."""
+    _adv = ctypes.WinDLL('advapi32', use_last_error=True)
+    _ker = ctypes.WinDLL('kernel32',  use_last_error=True)
+
+    TOKEN_ADJUST_PRIVILEGES = 0x00000020
+
+    class _LUID(ctypes.Structure):
+        _fields_ = [('LowPart', ctypes.c_uint32), ('HighPart', ctypes.c_int32)]
+
+    class _LUID_ATTR(ctypes.Structure):
+        _fields_ = [('Luid', _LUID), ('Attributes', ctypes.c_uint32)]
+
+    class _TOKEN_PRIVS(ctypes.Structure):
+        _fields_ = [('Count', ctypes.c_uint32), ('Privs', _LUID_ATTR * 1)]
+
+    h_proc  = _ker.GetCurrentProcess()
+    h_token = ctypes.wintypes.HANDLE()
+    _adv.OpenProcessToken(h_proc, TOKEN_ADJUST_PRIVILEGES, ctypes.byref(h_token))
+    luid = _LUID()
+    _adv.LookupPrivilegeValueW(None, name, ctypes.byref(luid))
+    tp = _TOKEN_PRIVS()
+    tp.Count          = 1
+    tp.Privs[0].Luid  = luid
+    tp.Privs[0].Attributes = 2  # SE_PRIVILEGE_ENABLED
+    _adv.AdjustTokenPrivileges(h_token, False, ctypes.byref(tp), 0, None, None)
+    _ker.CloseHandle(h_token)
+
+
+def clear_init_failed() -> bool:
+    """
+    Clear the INITSTARTFAILED flag PnP sets when a driver fails to load.
+
+    The Services\\<svc>\\Enum key is SYSTEM-only.  We bypass the ACL by enabling
+    SeRestorePrivilege and opening the key with REG_OPTION_BACKUP_RESTORE (4),
+    which instructs the kernel to skip access-check enforcement.
+    """
+    _enable_privilege("SeBackupPrivilege")
+    _enable_privilege("SeRestorePrivilege")
+
+    REG_OPTION_BACKUP_RESTORE = 4
+    HKLM = 0x80000002
+
+    _adv = ctypes.WinDLL('advapi32', use_last_error=True)
+    _adv.RegOpenKeyExW.restype  = ctypes.c_long
+    _adv.RegOpenKeyExW.argtypes = [
+        ctypes.c_void_p, ctypes.c_wchar_p,
+        ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    _adv.RegSetValueExW.restype  = ctypes.c_long
+    _adv.RegSetValueExW.argtypes = [
+        ctypes.c_void_p, ctypes.c_wchar_p,
+        ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_void_p, ctypes.c_uint32,
+    ]
+    _adv.RegDeleteValueW.restype  = ctypes.c_long
+    _adv.RegDeleteValueW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    _adv.RegCloseKey.restype  = ctypes.c_long
+    _adv.RegCloseKey.argtypes = [ctypes.c_void_p]
+
+    hkey = ctypes.c_void_p()
+    path = f"SYSTEM\\CurrentControlSet\\Services\\{_SERVICE_NAME}\\Enum"
+    ret = _adv.RegOpenKeyExW(
+        HKLM, path,
+        REG_OPTION_BACKUP_RESTORE,
+        winreg.KEY_SET_VALUE,
+        ctypes.byref(hkey),
+    )
+    if ret != 0:
+        log.error("RegOpenKeyExW failed (rc=%d) — not running elevated?", ret)
+        return False
+
+    ret = _adv.RegDeleteValueW(hkey, "INITSTARTFAILED")
+    _adv.RegCloseKey(hkey)
+
+    if ret != 0:
+        log.warning("RegDeleteValueW rc=%d (value may not exist)", ret)
+    else:
+        log.info("INITSTARTFAILED cleared — unplug and replug the Tartarus to retry driver load")
+    return True
+
+
 def _service_exists() -> bool:
     rc, _ = _sc("query", _SERVICE_NAME)
     return rc == 0
@@ -178,6 +264,51 @@ def _delete_service() -> bool:
         log.error("sc delete failed (rc=%d): %s", rc, out)
         return False
     return True
+
+
+def _scrub_all_razer_upper_filters():
+    """
+    Remove all our filter names from every Razer HID device instance, including
+    collection children (MI_01&Col01 etc.) left over from a previous install that
+    used substring-matched HW ID enumeration.
+    """
+    _all_names = {_SERVICE_NAME} | set(_LEGACY_NAMES)
+    base = r"SYSTEM\CurrentControlSet\Enum\HID"
+    try:
+        hive = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base)
+    except OSError:
+        return
+    i = 0
+    while True:
+        try:
+            dev_id = winreg.EnumKey(hive, i)
+        except OSError:
+            break
+        i += 1
+        if "VID_1532&PID_0244" not in dev_id.upper():
+            continue
+        try:
+            dev_key = winreg.OpenKey(hive, dev_id)
+        except OSError:
+            continue
+        j = 0
+        while True:
+            try:
+                inst_id = winreg.EnumKey(dev_key, j)
+            except OSError:
+                break
+            j += 1
+            inst_path = rf"{base}\{dev_id}\{inst_id}"
+            filters = _get_upper_filters(inst_path)
+            if any(n in filters for n in _all_names):
+                cleaned = [f for f in filters if f not in _all_names]
+                try:
+                    _set_upper_filters(inst_path, cleaned)
+                    log.info("Scrubbed stale filter from %s → %s", inst_path, cleaned)
+                except PermissionError:
+                    pass
+        winreg.CloseKey(dev_key)
+    winreg.CloseKey(hive)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -213,12 +344,18 @@ def install_driver() -> bool:
         if not _create_service():
             return False
 
-    # 3. Add kbfiltr to UpperFilters for each Tartarus device instance
+    # 3. Scrub stale filter entries from ALL Razer HID nodes (incl. old MI_01 collections).
+    _scrub_all_razer_upper_filters()
+
+    # 4. Update UpperFilters for each Tartarus device instance:
+    #    remove any legacy service names, then add the current one.
     found_any = False
     for hw_id in _RAZER_HW_IDS:
         for inst_path in _enum_device_instances(hw_id):
             found_any = True
             filters = _get_upper_filters(inst_path)
+            # Strip old names (e.g. 'kbfiltr' with stale INITSTARTFAILED entry)
+            filters = [f for f in filters if f not in _LEGACY_NAMES]
             if _SERVICE_NAME in filters:
                 log.info("UpperFilters already set for %s", inst_path)
                 continue
@@ -248,13 +385,14 @@ def uninstall_driver() -> bool:
         log.error("uninstall_driver requires elevation")
         return False
 
-    # 1. Remove UpperFilters
+    # 1. Remove UpperFilters (current name + any legacy names)
+    _all_names = {_SERVICE_NAME} | set(_LEGACY_NAMES)
     for hw_id in _RAZER_HW_IDS:
         for inst_path in _enum_device_instances(hw_id):
             filters = _get_upper_filters(inst_path)
-            if _SERVICE_NAME not in filters:
+            if not any(n in filters for n in _all_names):
                 continue
-            filters = [f for f in filters if f != _SERVICE_NAME]
+            filters = [f for f in filters if f not in _all_names]
             try:
                 _set_upper_filters(inst_path, filters)
                 log.info("Removed kbfiltr from UpperFilters: %s", inst_path)
@@ -341,6 +479,12 @@ def main():
 
     elif cmd == "uninstall":
         sys.exit(0 if uninstall_driver() else 1)
+
+    elif cmd == "clearflag":
+        ok = clear_init_failed()
+        if ok:
+            print("Flag cleared.  Unplug and replug the Tartarus Pro.")
+        sys.exit(0 if ok else 1)
 
     elif cmd == "testsign":
         ok = enable_test_signing()
